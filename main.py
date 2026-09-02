@@ -38,42 +38,65 @@ def generate_image(page_data, output_path):
         page.screenshot(path=output_path, full_page=False)
         browser.close()
 
-def post_facebook_album(state_name, post_date, image_paths):
+def post_facebook(state_name, post_date, image_paths):
     if not FB_PAGE_ID or not FB_PAGE_ACCESS_TOKEN:
         print("Facebook Credentials सापडले नाहीत.")
         return
 
-    media_ids = []
-    for img_path in image_paths:
+    caption = f"📊 {state_name} Mandi Bhav Today ({post_date})\n\nDaily market rates update for {state_name}."
+
+    # केस १: जर फक्त १ इमेज असेल तर ती थेट /photos वर पोस्ट करणे
+    if len(image_paths) == 1:
         url = f"https://graph.facebook.com/v20.0/{FB_PAGE_ID}/photos"
-        with open(img_path, "rb") as img_file:
+        with open(image_paths[0], "rb") as img_file:
             res = requests.post(
                 url,
-                params={"access_token": FB_PAGE_ACCESS_TOKEN, "published": "false"},
+                params={
+                    "access_token": FB_PAGE_ACCESS_TOKEN,
+                    "caption": caption,
+                    "published": "true"
+                },
                 files={"source": img_file}
             ).json()
 
         if "id" in res:
-            media_ids.append({"media_fbid": res["id"]})
+            print(f"✅ Facebook वर {state_name} ची सिंगल पोस्ट यशस्वी: {res['id']}")
         else:
-            print(f"Image Upload Failed: {res}")
+            print(f"❌ Facebook Single Photo Post Failed: {res}")
 
-    if not media_ids:
-        print("एकही इमेज अपलोड झाली नाही.")
-        return
-
-    feed_url = f"https://graph.facebook.com/v20.0/{FB_PAGE_ID}/feed"
-    payload = {
-        "access_token": FB_PAGE_ACCESS_TOKEN,
-        "message": f"📊 {state_name} Mandi Bhav Today ({post_date})\n\nDaily market rates update for {state_name}.",
-        "attached_media": json.dumps(media_ids)
-    }
-
-    res = requests.post(feed_url, data=payload).json()
-    if "id" in res:
-        print(f"✅ Facebook वर {state_name} चा पूर्ण अल्बम पोस्ट झाला: {res['id']}")
+    # केस २: जर एकापेक्षा जास्त (बल्क / अल्बम) इमेजेस असतील
     else:
-        print(f"❌ Facebook Feed Post Error: {res}")
+        media_ids = []
+        for img_path in image_paths:
+            url = f"https://graph.facebook.com/v20.0/{FB_PAGE_ID}/photos"
+            with open(img_path, "rb") as img_file:
+                res = requests.post(
+                    url,
+                    params={"access_token": FB_PAGE_ACCESS_TOKEN, "published": "false"},
+                    files={"source": img_file}
+                ).json()
+
+            if "id" in res:
+                media_ids.append({"media_fbid": res["id"]})
+            else:
+                print(f"Image Upload Failed: {res}")
+
+        if not media_ids:
+            print("कोणतीही इमेज अपलोड झाली नाही.")
+            return
+
+        feed_url = f"https://graph.facebook.com/v20.0/{FB_PAGE_ID}/feed"
+        payload = {
+            "access_token": FB_PAGE_ACCESS_TOKEN,
+            "message": caption,
+            "attached_media": json.dumps(media_ids)
+        }
+
+        res = requests.post(feed_url, data=payload).json()
+        if "id" in res:
+            print(f"✅ Facebook वर {state_name} चा मल्टी-इमेज अल्बम यशस्वी: {res['id']}")
+        else:
+            print(f"❌ Facebook Feed Post Failed: {res}")
 
 def main():
     if not PAGES_JSON:
@@ -107,7 +130,7 @@ def main():
         image_paths.append(img_name)
         print(f"📸 तयार झाली: {img_name}")
 
-    post_facebook_album(state_name, post_date, image_paths)
+    post_facebook(state_name, post_date, image_paths)
 
     for img in image_paths:
         if os.path.exists(img):
