@@ -42,25 +42,24 @@ def generate_image(page_data, output_path):
 
 def post_facebook_and_get_urls(caption, image_paths):
     uploaded = []
-    
-    # केस १: सिंगल इमेज पोस्ट
-    if len(image_paths) == 1:
-        img_path = image_paths[0]
+    media_ids = []
+
+    # १. १ असो वा ५ इमेजेस, सर्व आधी अनपब्लिश्ड (published=false) अपलोड होतात
+    for img_path in image_paths:
         url = f"https://graph.facebook.com/v20.0/{FB_PAGE_ID}/photos"
         with open(img_path, "rb") as img_file:
             res = requests.post(
                 url,
                 params={
                     "access_token": FB_PAGE_ACCESS_TOKEN,
-                    "caption": caption,
-                    "published": "true",
+                    "published": "false",
                     "fields": "id,images"
                 },
                 files={"source": img_file}
             ).json()
 
         if "id" in res:
-            print(f"✅ Facebook Single Post: {res['id']}")
+            media_ids.append({"media_fbid": res["id"]})
             img_url = ""
             if "images" in res and len(res["images"]) > 0:
                 img_url = res["images"][0].get("source", "")
@@ -72,58 +71,33 @@ def post_facebook_and_get_urls(caption, image_paths):
                 img_url = det.get("source", "")
             uploaded.append({"id": res["id"], "url": img_url})
         else:
-            print(f"❌ Facebook Single Post Failed: {res}")
+            print(f"❌ FB Photo Upload Failed: {res}")
 
-    # केस २: मल्टिपल इमेजेस अल्बम पोस्ट
+    if not media_ids:
+        print("❌ एकही इमेज अपलोड झाली नाही.")
+        return []
+
+    # २. Feed एंडपॉइंटद्वारे स्वतंत्र पोस्ट तयार करणे (कधीही एकत्र मर्ज होत नाही)
+    feed_url = f"https://graph.facebook.com/v20.0/{FB_PAGE_ID}/feed"
+    payload = {
+        "access_token": FB_PAGE_ACCESS_TOKEN,
+        "message": caption,
+        "attached_media": json.dumps(media_ids)
+    }
+
+    feed_res = requests.post(feed_url, data=payload).json()
+    if "id" in feed_res:
+        print(f"✅ Facebook वर स्वतंत्र पोस्ट तयार झाली ({len(image_paths)} पेजेस): {feed_res['id']}")
     else:
-        media_ids = []
-        for img_path in image_paths:
-            url = f"https://graph.facebook.com/v20.0/{FB_PAGE_ID}/photos"
-            with open(img_path, "rb") as img_file:
-                res = requests.post(
-                    url,
-                    params={
-                        "access_token": FB_PAGE_ACCESS_TOKEN,
-                        "published": "false",
-                        "fields": "id,images"
-                    },
-                    files={"source": img_file}
-                ).json()
-
-            if "id" in res:
-                media_ids.append({"media_fbid": res["id"]})
-                img_url = ""
-                if "images" in res and len(res["images"]) > 0:
-                    img_url = res["images"][0].get("source", "")
-                else:
-                    det = requests.get(
-                        f"https://graph.facebook.com/v20.0/{res['id']}",
-                        params={"access_token": FB_PAGE_ACCESS_TOKEN, "fields": "source"}
-                    ).json()
-                    img_url = det.get("source", "")
-                uploaded.append({"id": res["id"], "url": img_url})
-
-        if media_ids:
-            feed_url = f"https://graph.facebook.com/v20.0/{FB_PAGE_ID}/feed"
-            payload = {
-                "access_token": FB_PAGE_ACCESS_TOKEN,
-                "message": caption,
-                "attached_media": json.dumps(media_ids)
-            }
-            feed_res = requests.post(feed_url, data=payload).json()
-            if "id" in feed_res:
-                print(f"✅ Facebook Multi-image Album: {feed_res['id']}")
-            else:
-                print(f"❌ Facebook Album Error: {feed_res}")
+        print(f"❌ Facebook Feed त्रुटी: {feed_res}")
 
     return uploaded
 
 def post_instagram(caption, uploaded_media):
     if not IG_ACCOUNT_ID:
-        print("ℹ️ IG_ACCOUNT_ID सेट नाही, Instagram पोस्ट वगळली.")
         return
 
-    # केस १: सिंगल इमेज
+    # केस १: सिंगल पेज असल्यास सिंगल पोस्ट
     if len(uploaded_media) == 1:
         img_url = uploaded_media[0].get("url")
         if not img_url:
@@ -136,13 +110,13 @@ def post_instagram(caption, uploaded_media):
 
         if "id" in con_res:
             time.sleep(5)
-            pub_res = requests.post(
+            requests.post(
                 f"https://graph.facebook.com/v20.0/{IG_ACCOUNT_ID}/media_publish",
                 data={"access_token": FB_PAGE_ACCESS_TOKEN, "creation_id": con_res["id"]}
-            ).json()
-            print(f"✅ Instagram Single Post Published: {pub_res}")
+            )
+            print("✅ Instagram Single Post Published.")
 
-    # केस २: Carousel पोस्ट
+    # केस २: मल्टिपल पेजेस असल्यास Carousel पोस्ट
     else:
         child_ids = []
         for item in uploaded_media:
@@ -161,30 +135,27 @@ def post_instagram(caption, uploaded_media):
                 child_ids.append(child_res["id"])
             time.sleep(2)
 
-        if not child_ids:
-            return
-
-        car_res = requests.post(
-            f"https://graph.facebook.com/v20.0/{IG_ACCOUNT_ID}/media",
-            data={
-                "access_token": FB_PAGE_ACCESS_TOKEN,
-                "media_type": "CAROUSEL",
-                "caption": caption,
-                "children": ",".join(child_ids)
-            }
-        ).json()
-
-        if "id" in car_res:
-            time.sleep(8)
-            pub_res = requests.post(
-                f"https://graph.facebook.com/v20.0/{IG_ACCOUNT_ID}/media_publish",
-                data={"access_token": FB_PAGE_ACCESS_TOKEN, "creation_id": car_res["id"]}
+        if child_ids:
+            car_res = requests.post(
+                f"https://graph.facebook.com/v20.0/{IG_ACCOUNT_ID}/media",
+                data={
+                    "access_token": FB_PAGE_ACCESS_TOKEN,
+                    "media_type": "CAROUSEL",
+                    "caption": caption,
+                    "children": ",".join(child_ids)
+                }
             ).json()
-            print(f"✅ Instagram Carousel Published: {pub_res}")
+
+            if "id" in car_res:
+                time.sleep(8)
+                requests.post(
+                    f"https://graph.facebook.com/v20.0/{IG_ACCOUNT_ID}/media_publish",
+                    data={"access_token": FB_PAGE_ACCESS_TOKEN, "creation_id": car_res["id"]}
+                )
+                print(f"✅ Instagram Carousel Published ({len(child_ids)} पेजेस).")
 
 def main():
     if not PAGES_JSON:
-        print("❌ PAGES_JSON रिकामा आहे.")
         return
 
     data = json.loads(PAGES_JSON)
@@ -199,16 +170,13 @@ def main():
         pages = []
 
     if not pages:
-        print("कोणताही पेज डेटा उपलब्ध नाही.")
         return
 
     state_name = pages[0].get("StateName", "All India")
     post_date = pages[0].get("PostDate", "")
-    
-    # संपूर्ण इंग्रजी कॅप्शन
     caption = f"🧅 {state_name} Onion Mandi Bhav Today ({post_date})\n\nDaily Onion Market Rates Update for {state_name}."
 
-    print(f"🚀 State सुरू आहे: {state_name} ({len(pages)} पेजेस)")
+    print(f"🚀 Processing: {state_name} (एकूण {len(pages)} पेजेस)")
 
     image_paths = []
     for idx, page in enumerate(pages):
@@ -216,13 +184,14 @@ def main():
         generate_image(page, img_name)
         image_paths.append(img_name)
 
-    # १. Facebook वर पोस्ट करून URLs मिळवणे
+    # १. Facebook वर स्वतंत्र टाइमलाइन पोस्ट
     uploaded_media = post_facebook_and_get_urls(caption, image_paths)
 
-    # २. Instagram वर पोस्ट करणे
+    # २. Instagram वर पोस्ट (सिंगल किंवा कॅरोसेल)
     if uploaded_media:
         post_instagram(caption, uploaded_media)
 
+    # क्लिनअप
     for img in image_paths:
         if os.path.exists(img):
             os.remove(img)
