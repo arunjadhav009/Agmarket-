@@ -1,20 +1,18 @@
 import os
 import json
-import time
 import requests
 from playwright.sync_api import sync_playwright
 
 PAGES_JSON = os.environ.get("PAGES_JSON")
 FB_PAGE_ID = os.environ.get("FB_PAGE_ID")
 FB_PAGE_ACCESS_TOKEN = os.environ.get("FB_PAGE_ACCESS_TOKEN")
-IG_ACCOUNT_ID = os.environ.get("IG_ACCOUNT_ID")
 
-def generate_image_for_page(page_data, output_image_path):
+def generate_image(page_data, output_path):
     with open("template.html", "r", encoding="utf-8") as f:
         html_template = f.read()
 
     rows_html = ""
-    for r in page_data["PageData"]:
+    for r in page_data.get("PageData", []):
         rows_html += f"""
         <tr>
             <td>{r.get('District', '-')}</td>
@@ -37,46 +35,83 @@ def generate_image_for_page(page_data, output_image_path):
         browser = p.chromium.launch()
         page = browser.new_page(viewport={"width": 1080, "height": 1350})
         page.set_content(rendered_html)
-        page.screenshot(path=output_image_path, full_page=False)
+        page.screenshot(path=output_path, full_page=False)
         browser.close()
 
-def post_to_social_media(state_name, image_paths):
-    # तुमची सध्याची फेसबुक/इन्स्टा पोस्टिंग मेथड
-    print(f"Posting {len(image_paths)} images for {state_name} to Facebook and Instagram...")
-    # (टीप: तुमचे सध्याचे FB / Insta API कोड इथे थेट वापरा)
+def post_facebook_album(state_name, post_date, image_paths):
+    if not FB_PAGE_ID or not FB_PAGE_ACCESS_TOKEN:
+        print("Facebook Credentials सापडले नाहीत.")
+        return
+
+    media_ids = []
+    for img_path in image_paths:
+        url = f"https://graph.facebook.com/v20.0/{FB_PAGE_ID}/photos"
+        with open(img_path, "rb") as img_file:
+            res = requests.post(
+                url,
+                params={"access_token": FB_PAGE_ACCESS_TOKEN, "published": "false"},
+                files={"source": img_file}
+            ).json()
+
+        if "id" in res:
+            media_ids.append({"media_fbid": res["id"]})
+        else:
+            print(f"Image Upload Failed: {res}")
+
+    if not media_ids:
+        print("एकही इमेज अपलोड झाली नाही.")
+        return
+
+    feed_url = f"https://graph.facebook.com/v20.0/{FB_PAGE_ID}/feed"
+    payload = {
+        "access_token": FB_PAGE_ACCESS_TOKEN,
+        "message": f"📊 {state_name} Mandi Bhav Today ({post_date})\n\nDaily market rates update for {state_name}.",
+        "attached_media": json.dumps(media_ids)
+    }
+
+    res = requests.post(feed_url, data=payload).json()
+    if "id" in res:
+        print(f"✅ Facebook वर {state_name} चा पूर्ण अल्बम पोस्ट झाला: {res['id']}")
+    else:
+        print(f"❌ Facebook Feed Post Error: {res}")
 
 def main():
     if not PAGES_JSON:
-        print("कोणताही डेटा मिळाला नाही.")
+        print("PAGES_JSON रिकामा आहे.")
         return
 
-    states_data = json.loads(PAGES_JSON)
-    total_states = len(states_data)
-    print(f"एकूण राज्ये: {total_states}")
+    data = json.loads(PAGES_JSON)
+    if isinstance(data, str):
+        data = json.loads(data)
 
-    for idx, state_obj in enumerate(states_data):
-        state_name = state_obj["state"]
-        pages = state_obj["pages"]
-        print(f"\n[{idx + 1}/{total_states}] राज्य सुरू आहे: {state_name} (Pages: {len(pages)})")
+    if isinstance(data, dict) and "pages" in data:
+        pages = data["pages"]
+    elif isinstance(data, list):
+        pages = data
+    else:
+        print("डेटा फॉरमॅट जुळला नाही.")
+        return
 
-        image_files = []
-        for p_idx, page in enumerate(pages):
-            img_path = f"image_{state_name}_{p_idx+1}.png".replace(" ", "_")
-            generate_image_for_page(page, img_path)
-            image_files.append(img_path)
+    if not pages:
+        print("पेजेस सापडले नाहीत.")
+        return
 
-        # सोशल मीडियावर पोस्ट करा
-        post_to_social_media(state_name, image_files)
+    state_name = pages[0].get("StateName", "All India")
+    post_date = pages[0].get("PostDate", "")
+    print(f"🚀 Processing State: {state_name} (Total Pages: {len(pages)})")
 
-        # इमेज फाइल्स क्लीनअप
-        for img in image_files:
-            if os.path.exists(img):
-                os.remove(img)
+    image_paths = []
+    for idx, page in enumerate(pages):
+        img_name = f"output_{state_name}_{idx + 1}.png".replace(" ", "_")
+        generate_image(page, img_name)
+        image_paths.append(img_name)
+        print(f"📸 तयार झाली: {img_name}")
 
-        # शेवटचे राज्य नसल्यास पुढील राज्यासाठी १५ मिनिटे (900 सेकंद) गॅप
-        if idx < total_states - 1:
-            print(f"{state_name} पोस्ट पूर्ण. पुढील राज्यासाठी १५ मिनिटे वाट पाहत आहे...")
-            time.sleep(900)
+    post_facebook_album(state_name, post_date, image_paths)
+
+    for img in image_paths:
+        if os.path.exists(img):
+            os.remove(img)
 
 if __name__ == "__main__":
     main()
