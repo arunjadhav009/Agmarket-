@@ -16,13 +16,20 @@
     text-align: center;
     background: #1b5e20;
     color: white;
-    padding: 20px;
+    padding: 24px;
     border-radius: 12px;
     margin-bottom: 20px;
   }
-  .header h1 { margin: 0; font-size: 38px; }
-  .header h2 { margin: 6px 0 0; font-size: 26px; color: #ffeb3b; }
-  .header p { margin: 8px 0 0; font-size: 20px; }
+  .header h1 { 
+    margin: 0; 
+    font-size: 40px; 
+    font-weight: 700;
+  }
+  .header p { 
+    margin: 10px 0 0; 
+    font-size: 22px; 
+    color: #e8f5e9;
+  }
   table {
     width: 100%;
     border-collapse: collapse;
@@ -57,7 +64,6 @@
 <body>
   <div class="header">
     <h1>{{STATE_NAME}} Onion Market Rates</h1>
-    <h2>कांदा बाजार भाव</h2>
     <p>Date: {{POST_DATE}}</p>
   </div>
   <table>
