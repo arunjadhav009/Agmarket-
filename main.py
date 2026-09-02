@@ -43,7 +43,7 @@ def generate_image(page_data, output_path):
 def post_facebook_and_get_urls(caption, image_paths):
     uploaded = []
     
-    # केस १: जर फक्त १ इमेज असेल तर ती थेट फेसबुकवर PUBLISH करून टाका
+    # केस १: सिंगल इमेज पोस्ट
     if len(image_paths) == 1:
         img_path = image_paths[0]
         url = f"https://graph.facebook.com/v20.0/{FB_PAGE_ID}/photos"
@@ -60,7 +60,7 @@ def post_facebook_and_get_urls(caption, image_paths):
             ).json()
 
         if "id" in res:
-            print(f"✅ Facebook Single Post Published: {res['id']}")
+            print(f"✅ Facebook Single Post: {res['id']}")
             img_url = ""
             if "images" in res and len(res["images"]) > 0:
                 img_url = res["images"][0].get("source", "")
@@ -74,7 +74,7 @@ def post_facebook_and_get_urls(caption, image_paths):
         else:
             print(f"❌ Facebook Single Post Failed: {res}")
 
-    # केस २: २ किंवा जास्त इमेजेस असतील तर अनपब्लिश्ड अपलोड करून अल्बम पोस्ट तयार करा
+    # केस २: मल्टिपल इमेजेस अल्बम पोस्ट
     else:
         media_ids = []
         for img_path in image_paths:
@@ -102,8 +102,6 @@ def post_facebook_and_get_urls(caption, image_paths):
                     ).json()
                     img_url = det.get("source", "")
                 uploaded.append({"id": res["id"], "url": img_url})
-            else:
-                print(f"❌ Facebook Batch Upload Failed: {res}")
 
         if media_ids:
             feed_url = f"https://graph.facebook.com/v20.0/{FB_PAGE_ID}/feed"
@@ -114,9 +112,9 @@ def post_facebook_and_get_urls(caption, image_paths):
             }
             feed_res = requests.post(feed_url, data=payload).json()
             if "id" in feed_res:
-                print(f"✅ Facebook Multi-image Album Published: {feed_res['id']}")
+                print(f"✅ Facebook Multi-image Album: {feed_res['id']}")
             else:
-                print(f"❌ Facebook Feed Album Error: {feed_res}")
+                print(f"❌ Facebook Album Error: {feed_res}")
 
     return uploaded
 
@@ -129,7 +127,6 @@ def post_instagram(caption, uploaded_media):
     if len(uploaded_media) == 1:
         img_url = uploaded_media[0].get("url")
         if not img_url:
-            print("❌ Instagram साठी इमेज URL मिळाली नाही.")
             return
 
         con_res = requests.post(
@@ -144,10 +141,8 @@ def post_instagram(caption, uploaded_media):
                 data={"access_token": FB_PAGE_ACCESS_TOKEN, "creation_id": con_res["id"]}
             ).json()
             print(f"✅ Instagram Single Post Published: {pub_res}")
-        else:
-            print(f"❌ Instagram Container Failed: {con_res}")
 
-    # केस २: Carousel (मल्टी-इमेज)
+    # केस २: Carousel पोस्ट
     else:
         child_ids = []
         for item in uploaded_media:
@@ -167,7 +162,6 @@ def post_instagram(caption, uploaded_media):
             time.sleep(2)
 
         if not child_ids:
-            print("❌ Instagram Carousel साठी कंटेनर तयार झाले नाहीत.")
             return
 
         car_res = requests.post(
@@ -187,8 +181,6 @@ def post_instagram(caption, uploaded_media):
                 data={"access_token": FB_PAGE_ACCESS_TOKEN, "creation_id": car_res["id"]}
             ).json()
             print(f"✅ Instagram Carousel Published: {pub_res}")
-        else:
-            print(f"❌ Instagram Carousel Container Error: {car_res}")
 
 def main():
     if not PAGES_JSON:
@@ -212,7 +204,9 @@ def main():
 
     state_name = pages[0].get("StateName", "All India")
     post_date = pages[0].get("PostDate", "")
-    caption = f"🧅 {state_name} Onion Mandi Bhav Today ({post_date})\n\nआजचे {state_name} राज्यातील कांदा बाजार भाव (Daily Onion Market Rates Update)."
+    
+    # संपूर्ण इंग्रजी कॅप्शन
+    caption = f"🧅 {state_name} Onion Mandi Bhav Today ({post_date})\n\nDaily Onion Market Rates Update for {state_name}."
 
     print(f"🚀 State सुरू आहे: {state_name} ({len(pages)} पेजेस)")
 
@@ -222,10 +216,10 @@ def main():
         generate_image(page, img_name)
         image_paths.append(img_name)
 
-    # १. Facebook वर थेट पब्लिश करणे आणि URLs मिळवणे
+    # १. Facebook वर पोस्ट करून URLs मिळवणे
     uploaded_media = post_facebook_and_get_urls(caption, image_paths)
 
-    # २. Instagram वर पब्लिश करणे
+    # २. Instagram वर पोस्ट करणे
     if uploaded_media:
         post_instagram(caption, uploaded_media)
 
