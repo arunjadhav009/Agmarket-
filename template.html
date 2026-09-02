@@ -1,1 +1,80 @@
-
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<style>
+  body {
+    margin: 0;
+    padding: 30px;
+    font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+    background: #f4f7f6;
+    width: 1080px;
+    height: 1350px;
+    box-sizing: border-box;
+  }
+  .header {
+    text-align: center;
+    background: #1b5e20;
+    color: white;
+    padding: 20px;
+    border-radius: 12px;
+    margin-bottom: 20px;
+  }
+  .header h1 { margin: 0; font-size: 38px; }
+  .header p { margin: 8px 0 0; font-size: 22px; }
+  table {
+    width: 100%;
+    border-collapse: collapse;
+    background: white;
+    border-radius: 12px;
+    overflow: hidden;
+  }
+  th, td {
+    padding: 14px 16px;
+    text-align: left;
+    font-size: 20px;
+    border-bottom: 1px solid #e0e0e0;
+  }
+  th {
+    background: #2e7d32;
+    color: white;
+    font-weight: bold;
+  }
+  .modal-price {
+    font-weight: bold;
+    color: #b71c1c;
+  }
+  .footer {
+    margin-top: 20px;
+    display: flex;
+    justify-content: space-between;
+    font-size: 18px;
+    color: #555;
+  }
+</style>
+</head>
+<body>
+  <div class="header">
+    <h1>{{STATE_NAME}} Market Rates</h1>
+    <p>Date: {{POST_DATE}}</p>
+  </div>
+  <table>
+    <thead>
+      <tr>
+        <th>District</th>
+        <th>Market</th>
+        <th>Min Price</th>
+        <th>Max Price</th>
+        <th>Modal Price</th>
+      </tr>
+    </thead>
+    <tbody>
+      {{TABLE_ROWS}}
+    </tbody>
+  </table>
+  <div class="footer">
+    <span>Page {{CURRENT_PAGE}} of {{TOTAL_PAGES}}</span>
+    <span>Daily Mandi Rates Update</span>
+  </div>
+</body>
+</html>
