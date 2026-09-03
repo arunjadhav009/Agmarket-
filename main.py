@@ -104,7 +104,7 @@ def get_photo_url(photo_id):
 def post_facebook(state_name, post_date, caption, image_paths):
     uploaded = []
 
-    # १. सिंगल इमेज (१ पेज)
+    # १. जर स्टेटचे फक्त १ च पेज असेल -> थेट सिंगल पोस्ट
     if len(image_paths) == 1:
         url = f"https://graph.facebook.com/v20.0/{FB_PAGE_ID}/photos"
         with open(image_paths[0], "rb") as img_file:
@@ -132,7 +132,7 @@ def post_facebook(state_name, post_date, caption, image_paths):
         else:
             print(f"❌ Facebook Single Upload Error: {res}")
 
-    # २. मल्टिपल इमेजेसचा संपूर्ण ग्रुप / अल्बम (उदा. 13, 7, 5, 3 पेजेस)
+    # २. जर स्टेटचे २ किंवा त्यापेक्षा जास्त पेजेस असतील (३, ७, १०, १३) -> १ Dedicated Album (ग्रुप)
     else:
         album_name = f"{state_name} Onion Rates ({post_date})"
         album_url = f"https://graph.facebook.com/v20.0/{FB_PAGE_ID}/albums"
@@ -173,50 +173,9 @@ def post_facebook(state_name, post_date, caption, image_paths):
             else:
                 print(f"❌ Facebook Photo Upload Error: {photo_res}")
 
-        print(f"✅ Facebook Multi-image Album तयार झाला: {target_id} ({len(uploaded)} पेजेस)")
+        print(f"✅ Facebook Album मध्ये संपूर्ण ग्रुप यशस्वीपणे पोस्ट झाला: {target_id} ({len(uploaded)} पेजेस)")
 
     return uploaded
-
-def publish_ig_carousel(media_chunk, caption_text):
-    """Instagram वर जास्तीत जास्त १० इमेजेसचा कॅरोसेल पोस्ट करणे"""
-    child_ids = []
-    for item in media_chunk:
-        img_url = item["url"]
-        child_res = requests.post(
-            f"https://graph.facebook.com/v20.0/{IG_ACCOUNT_ID}/media",
-            data={
-                "access_token": FB_PAGE_ACCESS_TOKEN,
-                "image_url": img_url,
-                "is_carousel_item": "true"
-            }
-        ).json()
-        if "id" in child_res:
-            child_ids.append(child_res["id"])
-        time.sleep(2)
-
-    if not child_ids:
-        print("❌ Instagram Carousel साठी आयडी तयार झाले नाहीत.")
-        return
-
-    car_res = requests.post(
-        f"https://graph.facebook.com/v20.0/{IG_ACCOUNT_ID}/media",
-        data={
-            "access_token": FB_PAGE_ACCESS_TOKEN,
-            "media_type": "CAROUSEL",
-            "caption": caption_text,
-            "children": ",".join(child_ids)
-        }
-    ).json()
-
-    if "id" in car_res:
-        time.sleep(10)
-        pub_res = requests.post(
-            f"https://graph.facebook.com/v20.0/{IG_ACCOUNT_ID}/media_publish",
-            data={"access_token": FB_PAGE_ACCESS_TOKEN, "creation_id": car_res["id"]}
-        ).json()
-        print(f"✅ Instagram Carousel Published: {pub_res}")
-    else:
-        print(f"❌ Instagram Carousel Container Error: {car_res}")
 
 def post_instagram(caption, uploaded_media):
     if not IG_ACCOUNT_ID:
@@ -227,7 +186,7 @@ def post_instagram(caption, uploaded_media):
         print("❌ Instagram साठी व्हॅलिड URLs सापडल्या नाहीत.")
         return
 
-    # केस १: सिंगल इमेज
+    # १. जर स्टेटचे फक्त १ च पेज असेल -> सिंगल इमेज पोस्ट
     if len(valid_media) == 1:
         img_url = valid_media[0]["url"]
         con_res = requests.post(
@@ -243,18 +202,50 @@ def post_instagram(caption, uploaded_media):
             ).json()
             print(f"✅ Instagram Single Post Published: {pub_res}")
 
-    # केस २: २ ते १० इमेजेसचा एक ग्रुप
-    elif len(valid_media) <= 10:
-        publish_ig_carousel(valid_media, caption)
-
-    # केस ३: १० पेक्षा जास्त (उदा. १३ पेजेस) असल्यास दोन ग्रुप्समध्ये विभागून पोस्ट करणे
+    # २. स्टेटच्या जितक्याही इमेजेस असतील (३, ७, १०, १३) -> त्या सर्वच्या सर्व एकाच सिंगल कॅरोसेल ग्रुपमध्ये!
     else:
-        print(f"ℹ️ एकूण {len(valid_media)} पेजेस आहेत. Instagram नियमानुसार २ ग्रुप्समध्ये पोस्ट केले जातील.")
-        # पहिला ग्रुप (पहिले १० पेजेस)
-        publish_ig_carousel(valid_media[:10], f"{caption} (Part 1)")
-        time.sleep(10)
-        # दुसरा ग्रुप (उर्वरित पेजेस)
-        publish_ig_carousel(valid_media[10:], f"{caption} (Part 2)")
+        print(f"🚀 Instagram वर संपूर्ण {len(valid_media)} पेजेसचा १ अखंड ग्रुप (Carousel) तयार होत आहे...")
+        child_ids = []
+        for item in valid_media:
+            img_url = item["url"]
+            child_res = requests.post(
+                f"https://graph.facebook.com/v20.0/{IG_ACCOUNT_ID}/media",
+                data={
+                    "access_token": FB_PAGE_ACCESS_TOKEN,
+                    "image_url": img_url,
+                    "is_carousel_item": "true"
+                }
+            ).json()
+            if "id" in child_res:
+                child_ids.append(child_res["id"])
+            time.sleep(2)
+
+        if not child_ids:
+            print("❌ Instagram Carousel साठी चाइल्ड कंटेनर तयार झाले नाहीत.")
+            return
+
+        car_res = requests.post(
+            f"https://graph.facebook.com/v20.0/{IG_ACCOUNT_ID}/media",
+            data={
+                "access_token": FB_PAGE_ACCESS_TOKEN,
+                "media_type": "CAROUSEL",
+                "caption": caption,
+                "children": ",".join(child_ids)
+            }
+        ).json()
+
+        if "id" in car_res:
+            # सर्व पेजेस प्रोसेस होण्यासाठी पुरेसा वेळ (इमेज संख्येनुसार वाढवला आहे)
+            wait_time = max(15, len(child_ids) * 2)
+            time.sleep(wait_time)
+
+            pub_res = requests.post(
+                f"https://graph.facebook.com/v20.0/{IG_ACCOUNT_ID}/media_publish",
+                data={"access_token": FB_PAGE_ACCESS_TOKEN, "creation_id": car_res["id"]}
+            ).json()
+            print(f"✅ Instagram Carousel Published (सर्व {len(child_ids)} पेजेस एकाच ग्रुपमध्ये): {pub_res}")
+        else:
+            print(f"❌ Instagram Carousel Container Error: {car_res}")
 
 def main():
     if not PAGES_JSON:
@@ -280,7 +271,7 @@ def main():
     post_date = pages[0].get("PostDate", "")
     caption = f"🧅 {state_name} Onion Mandi Bhav Today ({post_date})\n\nDaily Onion Market Rates Update for {state_name}."
 
-    print(f"🚀 State सुरू आहे: {state_name} ({len(pages)} पेजेस चा ग्रुप)")
+    print(f"🚀 State सुरू आहे: {state_name} ({len(pages)} पेजेस चा १ अखंड ग्रुप)")
 
     image_paths = []
     for idx, page in enumerate(pages):
@@ -288,10 +279,10 @@ def main():
         generate_image(page, img_name)
         image_paths.append(img_name)
 
-    # १. Facebook पोस्टिंग (सर्वच्या सर्व इमेजेस एकाच अखंड अल्बम/ग्रुपमध्ये)
+    # १. Facebook: सर्वच्या सर्व पेजेसचा १ अखंड ग्रुप
     uploaded_media = post_facebook(state_name, post_date, caption, image_paths)
 
-    # २. Instagram पोस्टिंग (कॅरोसेल ग्रुप)
+    # २. Instagram: सर्वच्या सर्व पेजेसचा १ अखंड कॅरोसेल ग्रुप
     if uploaded_media:
         post_instagram(caption, uploaded_media)
 
