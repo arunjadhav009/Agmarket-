@@ -40,14 +40,13 @@ def generate_image(page_data, output_path):
         page.screenshot(path=output_path, full_page=False)
         browser.close()
 
-def post_facebook_and_get_urls(caption, image_paths):
+def post_facebook(state_name, post_date, caption, image_paths):
     uploaded = []
 
-    # केस १: फक्त १ इमेज असल्यास थेट Facebook वर पब्लिश करा
+    # १. सिंगल इमेज असल्यास स्वतंत्र टाइमलाइन पोस्ट म्हणून पब्लिश करणे
     if len(image_paths) == 1:
-        img_path = image_paths[0]
         url = f"https://graph.facebook.com/v20.0/{FB_PAGE_ID}/photos"
-        with open(img_path, "rb") as img_file:
+        with open(image_paths[0], "rb") as img_file:
             res = requests.post(
                 url,
                 params={
@@ -60,7 +59,7 @@ def post_facebook_and_get_urls(caption, image_paths):
             ).json()
 
         if "id" in res:
-            print(f"✅ Facebook Single Post Published: {res['id']}")
+            print(f"✅ Facebook Single Post यशस्वी: {res['id']}")
             img_url = ""
             if "images" in res and len(res["images"]) > 0:
                 img_url = res["images"][0].get("source", "")
@@ -72,51 +71,52 @@ def post_facebook_and_get_urls(caption, image_paths):
                 img_url = det.get("source", "")
             uploaded.append({"id": res["id"], "url": img_url})
         else:
-            print(f"❌ Facebook Single Post Failed: {res}")
+            print(f"❌ Facebook Single Upload Error: {res}")
 
-    # केस २: २ किंवा जास्त इमेजेस असल्यास अल्बम म्हणून पोस्ट करा
+    # २. मल्टिपल इमेजेस असल्यास स्वतंत्र अल्बम तयार करून त्यात टाकणे (Error 100 कायमस्वरूपी बायपास)
     else:
-        media_ids = []
-        for img_path in image_paths:
-            url = f"https://graph.facebook.com/v20.0/{FB_PAGE_ID}/photos"
+        album_name = f"{state_name} Onion Rates ({post_date})"
+        album_url = f"https://graph.facebook.com/v20.0/{FB_PAGE_ID}/albums"
+        album_res = requests.post(
+            album_url,
+            data={
+                "access_token": FB_PAGE_ACCESS_TOKEN,
+                "name": album_name,
+                "message": caption
+            }
+        ).json()
+
+        target_id = album_res.get("id", FB_PAGE_ID)
+        print(f"📁 Facebook Dedicated Album ID: {target_id}")
+
+        for idx, img_path in enumerate(image_paths):
+            upload_url = f"https://graph.facebook.com/v20.0/{target_id}/photos"
             with open(img_path, "rb") as img_file:
-                res = requests.post(
-                    url,
+                photo_res = requests.post(
+                    upload_url,
                     params={
                         "access_token": FB_PAGE_ACCESS_TOKEN,
-                        "published": "false",
+                        "caption": f"{state_name} - Page {idx + 1}",
                         "fields": "id,images"
                     },
                     files={"source": img_file}
                 ).json()
 
-            if "id" in res:
-                media_ids.append({"media_fbid": res["id"]})
+            if "id" in photo_res:
                 img_url = ""
-                if "images" in res and len(res["images"]) > 0:
-                    img_url = res["images"][0].get("source", "")
+                if "images" in photo_res and len(photo_res["images"]) > 0:
+                    img_url = photo_res["images"][0].get("source", "")
                 else:
                     det = requests.get(
-                        f"https://graph.facebook.com/v20.0/{res['id']}",
+                        f"https://graph.facebook.com/v20.0/{photo_res['id']}",
                         params={"access_token": FB_PAGE_ACCESS_TOKEN, "fields": "source"}
                     ).json()
                     img_url = det.get("source", "")
-                uploaded.append({"id": res["id"], "url": img_url})
+                uploaded.append({"id": photo_res["id"], "url": img_url})
             else:
-                print(f"❌ Facebook Batch Upload Failed: {res}")
+                print(f"❌ Facebook Album Photo Upload Failed: {photo_res}")
 
-        if media_ids:
-            feed_url = f"https://graph.facebook.com/v20.0/{FB_PAGE_ID}/feed"
-            payload = {
-                "access_token": FB_PAGE_ACCESS_TOKEN,
-                "message": caption,
-                "attached_media": json.dumps(media_ids)
-            }
-            feed_res = requests.post(feed_url, data=payload).json()
-            if "id" in feed_res:
-                print(f"✅ Facebook Multi-image Album Published: {feed_res['id']}")
-            else:
-                print(f"❌ Facebook Feed Album Error: {feed_res}")
+        print(f"✅ Facebook Multi-image Album तयार झाला: {target_id} ({len(uploaded)} पेजेस)")
 
     return uploaded
 
@@ -124,7 +124,7 @@ def post_instagram(caption, uploaded_media):
     if not IG_ACCOUNT_ID:
         return
 
-    # सिंगल इमेज
+    # केस १: सिंगल इमेज
     if len(uploaded_media) == 1:
         img_url = uploaded_media[0].get("url")
         if not img_url:
@@ -142,10 +142,8 @@ def post_instagram(caption, uploaded_media):
                 data={"access_token": FB_PAGE_ACCESS_TOKEN, "creation_id": con_res["id"]}
             ).json()
             print(f"✅ Instagram Single Post Published: {pub_res}")
-        else:
-            print(f"❌ Instagram Single Container Error: {con_res}")
 
-    # Carousel पोस्ट (मल्टी-इमेज)
+    # केस २: Carousel पोस्ट
     else:
         child_ids = []
         for item in uploaded_media:
@@ -184,8 +182,6 @@ def post_instagram(caption, uploaded_media):
                 data={"access_token": FB_PAGE_ACCESS_TOKEN, "creation_id": car_res["id"]}
             ).json()
             print(f"✅ Instagram Carousel Published: {pub_res}")
-        else:
-            print(f"❌ Instagram Carousel Container Error: {car_res}")
 
 def main():
     if not PAGES_JSON:
@@ -217,10 +213,10 @@ def main():
         generate_image(page, img_name)
         image_paths.append(img_name)
 
-    # १. Facebook वर पोस्ट करा आणि URLs मिळवा
-    uploaded_media = post_facebook_and_get_urls(caption, image_paths)
+    # १. Facebook पोस्टिंग
+    uploaded_media = post_facebook(state_name, post_date, caption, image_paths)
 
-    # २. Instagram वर पोस्ट करा
+    # २. Instagram पोस्टिंग
     if uploaded_media:
         post_instagram(caption, uploaded_media)
 
