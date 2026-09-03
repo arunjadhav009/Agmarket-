@@ -27,41 +27,43 @@
   }
   .header h1 { 
     margin: 0; 
-    font-size: 34px; 
+    font-size: 38px; 
     font-weight: 700;
     letter-spacing: 0.5px;
   }
   .header p { 
-    margin: 4px 0 0; 
-    font-size: 19px; 
+    margin: 6px 0 0; 
+    font-size: 22px; 
     color: #f1f5f9;
     opacity: 0.95;
   }
   .table-container {
     flex-grow: 1;
     margin-top: 14px;
-    margin-bottom: 10px;
+    margin-bottom: 12px;
     background: white;
     border-radius: 12px;
     overflow: hidden;
     border: 1px solid #e2e8f0;
     box-shadow: 0 4px 12px rgba(0,0,0,0.04);
+    display: flex;
   }
   table {
     width: 100%;
+    height: 100%;
     border-collapse: collapse;
   }
   th, td {
-    padding: 8px 12px;
+    padding: 12px 14px;
     text-align: left;
-    font-size: 17px;
+    font-size: 21px;
     border-bottom: 1px solid #edf2f7;
   }
   th {
     background: {{SECONDARY_COLOR}};
     color: white;
-    font-weight: 600;
-    font-size: 18px;
+    font-weight: 700;
+    font-size: 22px;
     text-transform: uppercase;
     letter-spacing: 0.4px;
   }
@@ -69,42 +71,42 @@
     background-color: #fafbfc;
   }
   .modal-price {
-    font-weight: 700;
+    font-weight: 800;
     color: #b71c1c;
   }
   .footer {
     display: flex;
     justify-content: space-between;
-    font-size: 16px;
+    font-size: 19px;
     color: #475569;
-    font-weight: 500;
+    font-weight: 600;
     padding: 4px 6px;
   }
 </style>
 </head>
 <body>
-  <div>
-    <div class="header">
-      <h1>{{STATE_NAME}} Onion Market Rates</h1>
-      <p>Date: {{POST_DATE}}</p>
-    </div>
-    <div class="table-container">
-      <table>
-        <thead>
-          <tr>
-            <th>District</th>
-            <th>Market</th>
-            <th>Min Price</th>
-            <th>Max Price</th>
-            <th>Modal Price</th>
-          </tr>
-        </thead>
-        <tbody>
-          {{TABLE_ROWS}}
-        </tbody>
-      </table>
-    </div>
+  <div class="header">
+    <h1>{{STATE_NAME}} Onion Market Rates</h1>
+    <p>Date: {{POST_DATE}}</p>
   </div>
+
+  <div class="table-container">
+    <table>
+      <thead>
+        <tr>
+          <th>District</th>
+          <th>Market</th>
+          <th>Min Price</th>
+          <th>Max Price</th>
+          <th>Modal Price</th>
+        </tr>
+      </thead>
+      <tbody>
+        {{TABLE_ROWS}}
+      </tbody>
+    </table>
+  </div>
+
   <div class="footer">
     <span>Page {{CURRENT_PAGE}} of {{TOTAL_PAGES}}</span>
     <span>Daily Onion Mandi Rates Update</span>
