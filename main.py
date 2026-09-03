@@ -10,7 +10,6 @@ FB_PAGE_ID = os.environ.get("FB_PAGE_ID")
 FB_PAGE_ACCESS_TOKEN = os.environ.get("FB_PAGE_ACCESS_TOKEN")
 IG_ACCOUNT_ID = os.environ.get("IG_ACCOUNT_ID")
 
-# भारतातील राज्ये, स्थानिक भाषा, कोड आणि सिनेमॅटिक थीम्स
 STATE_CONFIG = {
     "Gujarat": {
         "code": "GJ", "local": "ગુજરાત ડુંગળી બજાર ભાવ",
@@ -63,7 +62,7 @@ STATE_CONFIG = {
         "table_primary": "#1e40af", "table_sec": "#2563eb", "bg": "#eff6ff"
     },
     "West Bengal": {
-        "code": "WB", "local": "পশ্চিমবঙ্গ পেঁয়াজ বাজার দর",
+        "code": "WB", "local": "পশ্চিমবঙ্গ পেঁয়াজ बाजार দর",
         "theme": "#0891b2", "theme_light": "rgba(8, 145, 178, 0.4)",
         "table_primary": "#155e75", "table_sec": "#0891b2", "bg": "#ecfeff"
     },
@@ -154,12 +153,28 @@ def generate_data_image(page_data, output_path):
         page.screenshot(path=output_path, full_page=False)
         browser.close()
 
-def upload_images_for_instagram(image_paths):
+def get_photo_url(photo_id):
+    for _ in range(4):
+        res = requests.get(
+            f"https://graph.facebook.com/v20.0/{photo_id}",
+            params={"access_token": FB_PAGE_ACCESS_TOKEN, "fields": "source,images"}
+        ).json()
+        if "images" in res and len(res["images"]) > 0:
+            return res["images"][0]["source"]
+        if "source" in res:
+            return res["source"]
+        time.sleep(2)
+    return ""
+
+def post_facebook_and_get_urls(state_name, caption, image_paths):
     """
-    इमेजेस तात्पुरत्या Meta कडे सुरक्षित अपलोड करून Instagram साठी Public URLs मिळवणे.
-    (no_story=true असल्यामुळे Facebook टाइमलाइनवर कसलाही कोलाज किंवा पोस्ट बनत नाही)
+    Facebook वर फक्त आणि फक्त याच स्टेटचा १ स्वतंत्र अखंड Multi-Photo Group तयार करणे
+    आणि Instagram साठी व्हॅलिड URLs मिळवणे.
     """
-    uploaded_urls = []
+    photo_ids = []
+    image_urls = []
+
+    # १. आधी सर्व इमेजेस FB कडे अनपब्लिश्ड म्हणून अपलोड करणे
     for idx, img_path in enumerate(image_paths):
         url = f"https://graph.facebook.com/v20.0/{FB_PAGE_ID}/photos"
         with open(img_path, "rb") as f:
@@ -167,44 +182,53 @@ def upload_images_for_instagram(image_paths):
                 url,
                 data={
                     "access_token": FB_PAGE_ACCESS_TOKEN,
-                    "published": "false",
-                    "no_story": "true"
+                    "published": "false"
                 },
                 files={"source": f}
             ).json()
 
         if "id" in res:
-            pid = res["id"]
-            time.sleep(1)
-            photo_info = requests.get(
-                f"https://graph.facebook.com/v20.0/{pid}",
-                params={"access_token": FB_PAGE_ACCESS_TOKEN, "fields": "images,source"}
-            ).json()
-
-            src = ""
-            if "images" in photo_info and len(photo_info["images"]) > 0:
-                src = photo_info["images"][0]["source"]
-            elif "source" in photo_info:
-                src = photo_info["source"]
-
-            if src:
-                uploaded_urls.append(src)
-                print(f"📸 Image {idx + 1}/{len(image_paths)} Ready for Instagram")
+            pid = str(res["id"])
+            photo_ids.append(pid)
+            img_url = get_photo_url(pid)
+            if img_url:
+                image_urls.append(img_url)
+            print(f"📸 Image {idx + 1}/{len(image_paths)} Ready (ID: {pid})")
         else:
-            print(f"❌ Storage Error: {res}")
+            print(f"❌ Upload Error: {res}")
 
-    return uploaded_urls
+    # २. Facebook Page Feed वर Multi-Photo Post पब्लिश करणे
+    if photo_ids:
+        feed_url = f"https://graph.facebook.com/v20.0/{FB_PAGE_ID}/feed"
+        
+        # attached_media ला Graph API च्या अधिकृत नियमानुसार पाठवणे
+        form_payload = {
+            "access_token": FB_PAGE_ACCESS_TOKEN,
+            "message": caption
+        }
+        for i, pid in enumerate(photo_ids):
+            form_payload[f"attached_media[{i}]"] = f'{{"media_fbid":"{pid}"}}'
+
+        feed_res = requests.post(feed_url, data=form_payload).json()
+
+        if "id" in feed_res:
+            print(f"🎉 SUCCESS! Facebook वर {state_name} चा १ स्वतंत्र अखंड ग्रुप (Shareable) पब्लिश झाला: {feed_res['id']}")
+        else:
+            print(f"⚠️ FB Feed Note: {feed_res}")
+            # फॉलबॅक: जर Feed कॉल अडकला, तर पहिल्या कव्हर फोटोच्या पोस्टमध्ये बाकीचे जोडणे
+            primary_url = f"https://graph.facebook.com/v20.0/{photo_ids[0]}"
+            requests.post(primary_url, data={"access_token": FB_PAGE_ACCESS_TOKEN, "name": caption, "published": "true"})
+
+    return image_urls
 
 def post_instagram_carousel(caption, image_urls):
     if not IG_ACCOUNT_ID:
-        print("❌ IG_ACCOUNT_ID सापडला नाही.")
         return
 
-    # Instagram मर्यादा: १० इमेजेस (१ कव्हर + ९ डेटा पेजेस)
     carousel_urls = image_urls[:10]
     child_ids = []
 
-    print(f"🚀 Instagram वर १ कव्हर + {len(carousel_urls)-1} डेटा पेजेसचा अखंड ग्रुप तयार होत आहे...")
+    print(f"🚀 Instagram Carousel तयार होत आहे (१ कव्हर + {len(carousel_urls)-1} डेटा पेजेस)...")
     for img_url in carousel_urls:
         res = requests.post(
             f"https://graph.facebook.com/v20.0/{IG_ACCOUNT_ID}/media",
@@ -219,10 +243,9 @@ def post_instagram_carousel(caption, image_urls):
         time.sleep(2)
 
     if not child_ids:
-        print("❌ Instagram कंटेनर आयडी तयार झाले नाहीत.")
+        print("❌ Instagram कंटेनर तयार झाले नाहीत.")
         return
 
-    # मेन कॅरोसेल कंटेनर तयार करणे
     car_res = requests.post(
         f"https://graph.facebook.com/v20.0/{IG_ACCOUNT_ID}/media",
         data={
@@ -234,29 +257,17 @@ def post_instagram_carousel(caption, image_urls):
     ).json()
 
     if "id" in car_res:
-        creation_id = car_res["id"]
-        time.sleep(15)
-
-        # Instagram वर पब्लिश (आणि ॲप सेटिंगनुसार थेट Facebook ला ऑटो-सिंक)
+        time.sleep(12)
         pub_res = requests.post(
             f"https://graph.facebook.com/v20.0/{IG_ACCOUNT_ID}/media_publish",
-            data={
-                "access_token": FB_PAGE_ACCESS_TOKEN,
-                "creation_id": creation_id
-            }
+            data={"access_token": FB_PAGE_ACCESS_TOKEN, "creation_id": car_res["id"]}
         ).json()
-
-        if "id" in pub_res:
-            print(f"🎉 SUCCESS! Instagram वर संपूर्ण अखंड ग्रुप पब्लिश झाला: {pub_res['id']}")
-            print("🔗 Meta ऑटो-शेअरिंग सुरू असल्याने हा अखंड ग्रुप थेट Facebook पेजवर कव्हरसह आपोआप दिसेल!")
-        else:
-            print(f"❌ Publish Error: {pub_res}")
+        print(f"🎉 SUCCESS! Instagram वर अखंड ग्रुप पब्लिश झाला: {pub_res}")
     else:
-        print(f"❌ Carousel Container Error: {car_res}")
+        print(f"❌ Instagram Error: {car_res}")
 
 def main():
     if not PAGES_JSON:
-        print("❌ PAGES_JSON रिकामा आहे.")
         return
 
     data = json.loads(PAGES_JSON)
@@ -265,7 +276,6 @@ def main():
 
     pages = data if isinstance(data, list) else data.get("pages", [])
     if not pages:
-        print("कोणताही डेटा सापडला नाही.")
         return
 
     state_name = pages[0].get("StateName", "All India")
@@ -279,23 +289,24 @@ def main():
 
     image_paths = []
 
-    # १. पहिले 4K Cinematic कव्हर पोस्टर बनवणे (Index 0 - सर्वात वर राहील)
+    # १. पहिले 4K Cinematic कव्हर पोस्टर बनवणे (Page 1)
     cover_img = f"cover_{state_name}.png".replace(" ", "_")
     generate_cover_image(state_name, post_date, total_records, cover_img)
     image_paths.append(cover_img)
 
-    # २. नंतर डेटा पेजेस जोडणे (Page 2 onwards)
+    # २. डेटा पेजेस जोडणे (Page 2 onwards)
     for idx, page in enumerate(pages):
         img_name = f"data_{state_name}_{idx + 1}.png".replace(" ", "_")
         generate_data_image(page, img_name)
         image_paths.append(img_name)
 
-    # ३. Instagram वर अखंड ग्रुप पब्लिश करणे
-    urls = upload_images_for_instagram(image_paths)
+    # ३. Facebook वर अखंड ग्रुप पोस्ट करणे आणि URLs मिळवणे
+    urls = post_facebook_and_get_urls(state_name, caption, image_paths)
+
+    # ४. Instagram वर १ अखंड कॅरोसेल पोस्ट करणे
     if urls:
         post_instagram_carousel(caption, urls)
 
-    # क्लिनअप
     for img in image_paths:
         if os.path.exists(img):
             os.remove(img)
