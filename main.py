@@ -10,7 +10,6 @@ FB_PAGE_ID = os.environ.get("FB_PAGE_ID")
 FB_PAGE_ACCESS_TOKEN = os.environ.get("FB_PAGE_ACCESS_TOKEN")
 IG_ACCOUNT_ID = os.environ.get("IG_ACCOUNT_ID")
 
-# राज्यनिहाय युनिक कलर थीम्स (Primary, Secondary, Background)
 STATE_THEMES = {
     "Gujarat": {"primary": "#005a9c", "secondary": "#1976d2", "bg": "#f0f7ff"},
     "Karnataka": {"primary": "#311b92", "secondary": "#512da8", "bg": "#f4f1fa"},
@@ -46,11 +45,9 @@ FALLBACK_PALETTES = [
 ]
 
 def get_state_theme(state_name):
-    # जर थेट मॅच मिळाले तर वापरा
     for key, val in STATE_THEMES.items():
         if key.lower() in state_name.lower() or state_name.lower() in key.lower():
             return val
-    # मॅच नसेल तर नावावरून युनिक पॅलेट निवडा
     hash_idx = int(hashlib.md5(state_name.encode()).hexdigest(), 16) % len(FALLBACK_PALETTES)
     return FALLBACK_PALETTES[hash_idx]
 
@@ -91,10 +88,24 @@ def generate_image(page_data, output_path):
         page.screenshot(path=output_path, full_page=False)
         browser.close()
 
+def get_photo_url(photo_id):
+    """Facebook कडून फोटोची पब्लिक व्हॅलिड URL मिळवणे"""
+    for _ in range(3):
+        res = requests.get(
+            f"https://graph.facebook.com/v20.0/{photo_id}",
+            params={"access_token": FB_PAGE_ACCESS_TOKEN, "fields": "source,images"}
+        ).json()
+        if "images" in res and len(res["images"]) > 0:
+            return res["images"][0]["source"]
+        if "source" in res:
+            return res["source"]
+        time.sleep(2)
+    return ""
+
 def post_facebook(state_name, post_date, caption, image_paths):
     uploaded = []
 
-    # केस १: सिंगल इमेज असल्यास थेट पब्लिश करणे
+    # १. सिंगल इमेज असल्यास थेट पोस्ट
     if len(image_paths) == 1:
         url = f"https://graph.facebook.com/v20.0/{FB_PAGE_ID}/photos"
         with open(image_paths[0], "rb") as img_file:
@@ -104,7 +115,7 @@ def post_facebook(state_name, post_date, caption, image_paths):
                     "access_token": FB_PAGE_ACCESS_TOKEN,
                     "caption": caption,
                     "published": "true",
-                    "fields": "id,images"
+                    "fields": "id,images,source"
                 },
                 files={"source": img_file}
             ).json()
@@ -114,17 +125,16 @@ def post_facebook(state_name, post_date, caption, image_paths):
             img_url = ""
             if "images" in res and len(res["images"]) > 0:
                 img_url = res["images"][0].get("source", "")
+            elif "source" in res:
+                img_url = res.get("source", "")
             else:
-                det = requests.get(
-                    f"https://graph.facebook.com/v20.0/{res['id']}",
-                    params={"access_token": FB_PAGE_ACCESS_TOKEN, "fields": "source"}
-                ).json()
-                img_url = det.get("source", "")
+                img_url = get_photo_url(res["id"])
+
             uploaded.append({"id": res["id"], "url": img_url})
         else:
             print(f"❌ Facebook Single Upload Error: {res}")
 
-    # केस २: मल्टिपल इमेजेस असल्यास स्वतंत्र अल्बम तयार करून अपलोड करणे
+    # २. मल्टिपल इमेजेस असल्यास स्वतंत्र अल्बम
     else:
         album_name = f"{state_name} Onion Rates ({post_date})"
         album_url = f"https://graph.facebook.com/v20.0/{FB_PAGE_ID}/albums"
@@ -148,7 +158,7 @@ def post_facebook(state_name, post_date, caption, image_paths):
                     params={
                         "access_token": FB_PAGE_ACCESS_TOKEN,
                         "caption": f"{state_name} - Page {idx + 1}",
-                        "fields": "id,images"
+                        "fields": "id,images,source"
                     },
                     files={"source": img_file}
                 ).json()
@@ -157,15 +167,14 @@ def post_facebook(state_name, post_date, caption, image_paths):
                 img_url = ""
                 if "images" in photo_res and len(photo_res["images"]) > 0:
                     img_url = photo_res["images"][0].get("source", "")
+                elif "source" in photo_res:
+                    img_url = photo_res.get("source", "")
                 else:
-                    det = requests.get(
-                        f"https://graph.facebook.com/v20.0/{photo_res['id']}",
-                        params={"access_token": FB_PAGE_ACCESS_TOKEN, "fields": "source"}
-                    ).json()
-                    img_url = det.get("source", "")
+                    img_url = get_photo_url(photo_res["id"])
+
                 uploaded.append({"id": photo_res["id"], "url": img_url})
             else:
-                print(f"❌ Facebook Album Photo Upload Failed: {photo_res}")
+                print(f"❌ Facebook Photo Upload Failed: {photo_res}")
 
         print(f"✅ Facebook Multi-image Album तयार झाला: {target_id} ({len(uploaded)} पेजेस)")
 
@@ -176,12 +185,20 @@ def post_instagram(caption, uploaded_media):
         print("ℹ️ IG_ACCOUNT_ID सेट नाही, Instagram पोस्ट वगळली.")
         return
 
-    # सिंगल इमेज
-    if len(uploaded_media) == 1:
-        img_url = uploaded_media[0].get("url")
-        if not img_url:
-            return
+    # फिल्टर: फक्त वैध URL असलेलेच आयटम्स घेणे
+    valid_media = [m for m in uploaded_media if m.get("url")]
+    if not valid_media:
+        print("❌ Instagram साठी वैध इमेज URLs उपलब्ध नाहीत.")
+        return
 
+    # Instagram Carousel मर्यादा: कमाल १० इमेजेस
+    if len(valid_media) > 10:
+        print(f"⚠️ Instagram मर्यादा: एकूण {len(valid_media)} पैकी फक्त पहिल्या १० इमेजेस Carousel साठी वापरल्या जातील.")
+        valid_media = valid_media[:10]
+
+    # केस १: सिंगल इमेज
+    if len(valid_media) == 1:
+        img_url = valid_media[0]["url"]
         con_res = requests.post(
             f"https://graph.facebook.com/v20.0/{IG_ACCOUNT_ID}/media",
             data={"access_token": FB_PAGE_ACCESS_TOKEN, "image_url": img_url, "caption": caption}
@@ -195,15 +212,13 @@ def post_instagram(caption, uploaded_media):
             ).json()
             print(f"✅ Instagram Single Post Published: {pub_res}")
         else:
-            print(f"❌ Instagram Container Error: {con_res}")
+            print(f"❌ Instagram Single Container Error: {con_res}")
 
-    # Carousel पोस्ट (मल्टी-इमेज)
+    # केस २: Carousel पोस्ट (२ ते १० इमेजेस)
     else:
         child_ids = []
-        for item in uploaded_media:
-            img_url = item.get("url")
-            if not img_url:
-                continue
+        for item in valid_media:
+            img_url = item["url"]
             child_res = requests.post(
                 f"https://graph.facebook.com/v20.0/{IG_ACCOUNT_ID}/media",
                 data={
@@ -217,6 +232,7 @@ def post_instagram(caption, uploaded_media):
             time.sleep(2)
 
         if not child_ids:
+            print("❌ Instagram Carousel चे चाइल्ड कंटेनर्स तयार झाले नाहीत.")
             return
 
         car_res = requests.post(
@@ -230,7 +246,7 @@ def post_instagram(caption, uploaded_media):
         ).json()
 
         if "id" in car_res:
-            time.sleep(8)
+            time.sleep(10)
             pub_res = requests.post(
                 f"https://graph.facebook.com/v20.0/{IG_ACCOUNT_ID}/media_publish",
                 data={"access_token": FB_PAGE_ACCESS_TOKEN, "creation_id": car_res["id"]}
@@ -274,7 +290,7 @@ def main():
     # १. Facebook पोस्टिंग
     uploaded_media = post_facebook(state_name, post_date, caption, image_paths)
 
-    # २. Instagram पोस्टिंग
+    # २. Instagram पोस्टिंग (१० पेक्षा जास्त पेजेस असल्यास १० ची लिमिट आणि URL री-ट्राय)
     if uploaded_media:
         post_instagram(caption, uploaded_media)
 
