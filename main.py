@@ -10,7 +10,6 @@ FB_PAGE_ID = os.environ.get("FB_PAGE_ID")
 FB_PAGE_ACCESS_TOKEN = os.environ.get("FB_PAGE_ACCESS_TOKEN")
 IG_ACCOUNT_ID = os.environ.get("IG_ACCOUNT_ID")
 
-# भारतातील राज्ये, स्थानिक भाषा, कोड आणि सिनेमॅटिक थीम्स
 STATE_CONFIG = {
     "Gujarat": {
         "code": "GJ", "local": "ગુજરાત ડુંગળી બજાર ભાવ",
@@ -167,32 +166,59 @@ def get_photo_url(photo_id):
         time.sleep(2)
     return ""
 
-def post_facebook_bundle(caption, image_paths):
+def post_facebook_multi(state_name, caption, image_paths):
+    """
+    Facebook वर फक्त आणि फक्त याच स्टेटचा १ स्वतंत्र पोस्ट बॉक्स (Multi-photo Feed Post) तयार करणे.
+    १ नंबरला कव्हर फोटो येईल आणि थेट SHARE चे बटण मिळेल.
+    """
     uploaded = []
-    total = len(image_paths)
+    photo_ids = []
 
+    # १. आधी सर्व फोटो unpublished (बॅकग्राउंड) म्हणून अपलोड करणे
     for idx, img_path in enumerate(image_paths):
         url = f"https://graph.facebook.com/v20.0/{FB_PAGE_ID}/photos"
-        page_caption = caption if idx == 0 else f"{caption}\n\n[Page {idx + 1} of {total}]"
-
         with open(img_path, "rb") as img_file:
             res = requests.post(
                 url,
-                params={
+                data={
                     "access_token": FB_PAGE_ACCESS_TOKEN,
-                    "caption": page_caption,
-                    "published": "true",
-                    "fields": "id,images,source"
+                    "published": "false",
+                    "temporary": "true"
                 },
                 files={"source": img_file}
             ).json()
 
         if "id" in res:
-            img_url = get_photo_url(res["id"])
-            uploaded.append({"id": res["id"], "url": img_url})
-            print(f"✅ FB Image {idx + 1}/{total} Uploaded: {res['id']}")
+            pid = res["id"]
+            photo_ids.append(pid)
+            img_url = get_photo_url(pid)
+            uploaded.append({"id": pid, "url": img_url})
+            print(f"📸 Image {idx + 1}/{len(image_paths)} Pre-uploaded (ID: {pid})")
         else:
-            print(f"❌ FB Upload Error: {res}")
+            print(f"❌ Image Upload Failed: {res}")
+
+    # २. Page Feed वर Multi-Photo Post तयार करणे
+    if photo_ids:
+        feed_url = f"https://graph.facebook.com/v20.0/{FB_PAGE_ID}/feed"
+        
+        # attached_media ला शुद्ध JSON लिस्ट फॉरमॅट देणे
+        attached_media_list = [{"media_fbid": str(pid)} for pid in photo_ids]
+
+        payload = {
+            "access_token": FB_PAGE_ACCESS_TOKEN,
+            "message": caption,
+            "attached_media": json.dumps(attached_media_list)
+        }
+
+        feed_res = requests.post(feed_url, json=payload).json()
+
+        if "id" in feed_res:
+            print(f"🎉 Facebook वर {state_name} चा स्वतंत्र पोस्ट ग्रुप (Shareable) तयार झाला: {feed_res['id']}")
+        else:
+            print(f"⚠️ Feed Post Failed, fallback publishing: {feed_res}")
+            # जर फीड एंडपॉइंट एरर आला तर फोटो थेट टाइमलाइनवर पब्लिश करणे
+            for pid in photo_ids:
+                requests.post(f"https://graph.facebook.com/v20.0/{pid}", data={"access_token": FB_PAGE_ACCESS_TOKEN, "published": "true"})
 
     return uploaded
 
@@ -202,6 +228,7 @@ def post_instagram_carousel(caption, uploaded_media):
 
     valid_media = [m for m in uploaded_media if m.get("url")]
     if not valid_media:
+        print("❌ Instagram साठी व्हॅलिड URLs सापडल्या नाहीत.")
         return
 
     # Instagram मर्यादा: १० इमेजेस (१ कव्हर + ९ डेटा पेजेस)
@@ -224,6 +251,7 @@ def post_instagram_carousel(caption, uploaded_media):
         time.sleep(2)
 
     if not child_ids:
+        print("❌ Instagram कंटेनर तयार झाले नाहीत.")
         return
 
     car_res = requests.post(
@@ -243,6 +271,8 @@ def post_instagram_carousel(caption, uploaded_media):
             data={"access_token": FB_PAGE_ACCESS_TOKEN, "creation_id": car_res["id"]}
         ).json()
         print(f"✅ Instagram Carousel Published (१ कव्हर + डेटा पेजेस): {pub_res}")
+    else:
+        print(f"❌ Instagram Error: {car_res}")
 
 def main():
     if not PAGES_JSON:
@@ -278,12 +308,13 @@ def main():
         generate_data_image(page, img_name)
         image_paths.append(img_name)
 
-    # ३. Facebook आणि Instagram वर पोस्ट करणे
-    uploaded = post_facebook_bundle(caption, image_paths)
+    # ३. Facebook वर १ नंबरला कव्हर इमेज ठेवून स्वतंत्र मल्टि-फोटो पोस्ट करणे
+    uploaded = post_facebook_multi(state_name, caption, image_paths)
+
+    # ४. Instagram वर १ अखंड कॅरोसेल पोस्ट करणे
     if uploaded:
         post_instagram_carousel(caption, uploaded)
 
-    # क्लिनअप
     for img in image_paths:
         if os.path.exists(img):
             os.remove(img)
