@@ -168,13 +168,13 @@ def get_photo_url(photo_id):
 
 def post_facebook_multi(state_name, caption, image_paths):
     """
-    Facebook वर फक्त आणि फक्त याच स्टेटचा १ स्वतंत्र पोस्ट बॉक्स (Multi-photo Feed Post) तयार करणे.
-    १ नंबरला कव्हर फोटो येईल आणि थेट SHARE चे बटण मिळेल.
+    Facebook वर फक्त आणि फक्त याच स्टेटची १ स्वतंत्र Multi-Photo Feed Post तयार करणे.
+    १ नंबरला कव्हर फोटो येईल आणि थेट SHARE बटण मिळेल.
     """
     uploaded = []
     photo_ids = []
 
-    # १. आधी सर्व फोटो unpublished (बॅकग्राउंड) म्हणून अपलोड करणे
+    # १. आधी सर्व फोटो unpublished म्हणून अपलोड करणे
     for idx, img_path in enumerate(image_paths):
         url = f"https://graph.facebook.com/v20.0/{FB_PAGE_ID}/photos"
         with open(img_path, "rb") as img_file:
@@ -182,43 +182,40 @@ def post_facebook_multi(state_name, caption, image_paths):
                 url,
                 data={
                     "access_token": FB_PAGE_ACCESS_TOKEN,
-                    "published": "false",
-                    "temporary": "true"
+                    "published": "false"
                 },
                 files={"source": img_file}
             ).json()
 
         if "id" in res:
-            pid = res["id"]
+            pid = str(res["id"])
             photo_ids.append(pid)
             img_url = get_photo_url(pid)
             uploaded.append({"id": pid, "url": img_url})
-            print(f"📸 Image {idx + 1}/{len(image_paths)} Pre-uploaded (ID: {pid})")
+            print(f"📸 Image {idx + 1}/{len(image_paths)} Uploaded (ID: {pid})")
         else:
             print(f"❌ Image Upload Failed: {res}")
 
-    # २. Page Feed वर Multi-Photo Post तयार करणे
+    # २. Page Feed वर अचूक form-data फॉरमॅटमध्ये Multi-Photo Post तयार करणे
     if photo_ids:
         feed_url = f"https://graph.facebook.com/v20.0/{FB_PAGE_ID}/feed"
         
-        # attached_media ला शुद्ध JSON लिस्ट फॉरमॅट देणे
-        attached_media_list = [{"media_fbid": str(pid)} for pid in photo_ids]
-
-        payload = {
+        # Facebook Graph API चे अधिकृत attached_media form-data स्वरूप
+        form_payload = {
             "access_token": FB_PAGE_ACCESS_TOKEN,
             "message": caption,
-            "attached_media": json.dumps(attached_media_list)
+            "published": "true"
         }
+        for i, pid in enumerate(photo_ids):
+            form_payload[f"attached_media[{i}]"] = f'{{"media_fbid":"{pid}"}}'
 
-        feed_res = requests.post(feed_url, json=payload).json()
+        # json= ऐवजी data= वापरणे बंधनकारक आहे
+        feed_res = requests.post(feed_url, data=form_payload).json()
 
         if "id" in feed_res:
-            print(f"🎉 Facebook वर {state_name} चा स्वतंत्र पोस्ट ग्रुप (Shareable) तयार झाला: {feed_res['id']}")
+            print(f"🎉 Facebook वर {state_name} ची स्वतंत्र ग्रुप पोस्ट तयार झाली (ID: {feed_res['id']})")
         else:
-            print(f"⚠️ Feed Post Failed, fallback publishing: {feed_res}")
-            # जर फीड एंडपॉइंट एरर आला तर फोटो थेट टाइमलाइनवर पब्लिश करणे
-            for pid in photo_ids:
-                requests.post(f"https://graph.facebook.com/v20.0/{pid}", data={"access_token": FB_PAGE_ACCESS_TOKEN, "published": "true"})
+            print(f"❌ Feed Post Error: {feed_res}")
 
     return uploaded
 
