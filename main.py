@@ -102,21 +102,23 @@ def get_photo_url(photo_id):
         time.sleep(2)
     return ""
 
-def upload_images_to_fb(state_name, caption, image_paths):
-    """Facebook वर फोटो पब्लिश करणे (एरर ३ आणि १०० कायमस्वरूपी बायपास)"""
+def post_facebook(state_name, post_date, caption, image_paths):
+    """
+    फेसबुकवर फक्त आणि फक्त त्याच स्टेटचा एकच स्वतंत्र पोस्ट बॉक्स बनवणे.
+    याच्या खाली स्पष्टपणे Like, Comment आणि SHARE चे बटण येईल.
+    """
     uploaded = []
     total = len(image_paths)
 
-    for idx, img_path in enumerate(image_paths):
+    # केस १: सिंगल पेज असल्यास
+    if total == 1:
         url = f"https://graph.facebook.com/v20.0/{FB_PAGE_ID}/photos"
-        page_caption = caption if total == 1 else f"{caption}\n\n[Page {idx + 1} of {total}]"
-        
-        with open(img_path, "rb") as img_file:
+        with open(image_paths[0], "rb") as img_file:
             res = requests.post(
                 url,
                 params={
                     "access_token": FB_PAGE_ACCESS_TOKEN,
-                    "caption": page_caption,
+                    "caption": caption,
                     "published": "true",
                     "fields": "id,images,source"
                 },
@@ -124,17 +126,55 @@ def upload_images_to_fb(state_name, caption, image_paths):
             ).json()
 
         if "id" in res:
-            img_url = ""
-            if "images" in res and len(res["images"]) > 0:
-                img_url = res["images"][0].get("source", "")
-            elif "source" in res:
-                img_url = res.get("source", "")
-            else:
-                img_url = get_photo_url(res["id"])
+            img_url = get_photo_url(res["id"])
             uploaded.append({"id": res["id"], "url": img_url})
-            print(f"✅ Facebook Photo Published: Page {idx + 1}/{total} (ID: {res['id']})")
+            print(f"✅ Facebook Single Post (Shareable) पब्लिश झाली: {res['id']}")
         else:
-            print(f"❌ Facebook Photo Upload Error: {res}")
+            print(f"❌ Facebook Single Upload Error: {res}")
+
+    # केस २: मल्टिपल पेजेस (स्वतंत्र मल्टि-फोटो फीड पोस्ट)
+    else:
+        photo_ids = []
+        
+        # १. सर्व फोटो स्वतंत्रपणे बॅकग्राउंडला अपलोड करणे
+        for idx, img_path in enumerate(image_paths):
+            url = f"https://graph.facebook.com/v20.0/{FB_PAGE_ID}/photos"
+            with open(img_path, "rb") as img_file:
+                res = requests.post(
+                    url,
+                    data={
+                        "access_token": FB_PAGE_ACCESS_TOKEN,
+                        "published": "false"
+                    },
+                    files={"source": img_file}
+                ).json()
+
+            if "id" in res:
+                pid = res["id"]
+                photo_ids.append(pid)
+                img_url = get_photo_url(pid)
+                uploaded.append({"id": pid, "url": img_url})
+            else:
+                print(f"❌ Facebook Photo Prepare Error: {res}")
+
+        # २. फेसबुकच्या अधिकृत Multi-Photo Post फॉरमॅटनुसार टाइमलाइन पोस्ट तयार करणे
+        if photo_ids:
+            feed_url = f"https://graph.facebook.com/v20.0/{FB_PAGE_ID}/feed"
+            
+            # attached_media[0]={"media_fbid":"id"} असा शुद्ध फॉर्म डेटा लागतो
+            feed_data = {
+                "access_token": FB_PAGE_ACCESS_TOKEN,
+                "message": caption
+            }
+            for i, pid in enumerate(photo_ids):
+                feed_data[f"attached_media[{i}]"] = f'{{"media_fbid":"{pid}"}}'
+
+            feed_res = requests.post(feed_url, data=feed_data).json()
+            
+            if "id" in feed_res:
+                print(f"🎉 Facebook वर फक्त {state_name} ची १ स्वतंत्र पोस्ट तयार झाली (Shareable ID: {feed_res['id']})")
+            else:
+                print(f"❌ Facebook Feed Post Error: {feed_res}")
 
     return uploaded
 
@@ -144,7 +184,7 @@ def post_instagram(caption, uploaded_media):
 
     valid_media = [m for m in uploaded_media if m.get("url")]
     if not valid_media:
-        print("❌ Instagram साठी व्हॅलिड URLs उपलब्ध नाहीत.")
+        print("❌ Instagram साठी व्हॅलिड URLs सापडल्या नाहीत.")
         return
 
     total_images = len(valid_media)
@@ -164,8 +204,6 @@ def post_instagram(caption, uploaded_media):
                 data={"access_token": FB_PAGE_ACCESS_TOKEN, "creation_id": con_res["id"]}
             ).json()
             print(f"✅ Instagram Single Post Published: {pub_res}")
-        else:
-            print(f"❌ Instagram Single Container Error: {con_res}")
 
     # केस २: मल्टिपल पेजेस (१८ रो मुळे कायमस्वरूपी १० च्या आत -> १ अखंड कॅरोसेल)
     else:
@@ -241,10 +279,10 @@ def main():
         generate_image(page, img_name)
         image_paths.append(img_name)
 
-    # १. Facebook वर पब्लिश करून URLs मिळवणे
-    uploaded_media = upload_images_to_fb(state_name, caption, image_paths)
+    # १. Facebook वर फक्त या स्टेटची स्वतंत्र शेअर करण्यायोग्य ग्रुप पोस्ट
+    uploaded_media = post_facebook(state_name, post_date, caption, image_paths)
 
-    # २. Instagram वर १ अखंड कॅरोसेलमध्ये पोस्ट करणे
+    # २. Instagram वर १ अखंड कॅरोसेल पोस्ट
     if uploaded_media:
         post_instagram(caption, uploaded_media)
 
