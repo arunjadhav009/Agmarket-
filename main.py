@@ -104,7 +104,7 @@ def get_photo_url(photo_id):
 def post_facebook(state_name, post_date, caption, image_paths):
     uploaded = []
 
-    # १. सिंगल इमेज (१ पेज)
+    # १. जर स्टेटचे फक्त १ च पेज असेल -> थेट स्वतंत्र सिंगल पोस्ट
     if len(image_paths) == 1:
         url = f"https://graph.facebook.com/v20.0/{FB_PAGE_ID}/photos"
         with open(image_paths[0], "rb") as img_file:
@@ -120,7 +120,7 @@ def post_facebook(state_name, post_date, caption, image_paths):
             ).json()
 
         if "id" in res:
-            print(f"✅ Facebook Single Post यशस्वी: {res['id']}")
+            print(f"✅ Facebook Single Post स्वतंत्रपणे पब्लिश झाली: {res['id']}")
             img_url = ""
             if "images" in res and len(res["images"]) > 0:
                 img_url = res["images"][0].get("source", "")
@@ -132,53 +132,49 @@ def post_facebook(state_name, post_date, caption, image_paths):
         else:
             print(f"❌ Facebook Single Upload Error: {res}")
 
-    # २. मल्टिपल इमेजेसचा संपूर्ण अल्बम (Facebook वर सर्वच्या सर्व पेजेस एकत्र)
+    # २. मल्टिपल पेजेस असल्यास: १ स्वतंत्र मल्टी-इमेज पोस्ट (कधीही मिक्स होणार नाही आणि थेट शेअर होईल)
     else:
-        album_name = f"{state_name} Onion Rates ({post_date})"
-        album_url = f"https://graph.facebook.com/v20.0/{FB_PAGE_ID}/albums"
-        album_res = requests.post(
-            album_url,
-            data={
-                "access_token": FB_PAGE_ACCESS_TOKEN,
-                "name": album_name,
-                "message": caption
-            }
-        ).json()
-
-        target_id = album_res.get("id", FB_PAGE_ID)
-        print(f"📁 Facebook Dedicated Album ID: {target_id}")
-
+        media_attachments = []
+        
+        # आधी सर्व इमेजेस बॅकग्राउंडला अनपब्लिश्ड (published=false) म्हणून अपलोड करणे
         for idx, img_path in enumerate(image_paths):
-            upload_url = f"https://graph.facebook.com/v20.0/{target_id}/photos"
+            upload_url = f"https://graph.facebook.com/v20.0/{FB_PAGE_ID}/photos"
             with open(img_path, "rb") as img_file:
                 photo_res = requests.post(
                     upload_url,
-                    params={
+                    data={
                         "access_token": FB_PAGE_ACCESS_TOKEN,
-                        "caption": f"{state_name} - Page {idx + 1} of {len(image_paths)}",
-                        "fields": "id,images,source"
+                        "published": "false"
                     },
                     files={"source": img_file}
                 ).json()
 
             if "id" in photo_res:
-                img_url = ""
-                if "images" in photo_res and len(photo_res["images"]) > 0:
-                    img_url = photo_res["images"][0].get("source", "")
-                elif "source" in photo_res:
-                    img_url = photo_res.get("source", "")
-                else:
-                    img_url = get_photo_url(photo_res["id"])
-                uploaded.append({"id": photo_res["id"], "url": img_url})
+                media_fbid = photo_res["id"]
+                media_attachments.append({"media_fbid": str(media_fbid)})
+                img_url = get_photo_url(media_fbid)
+                uploaded.append({"id": media_fbid, "url": img_url})
             else:
                 print(f"❌ Facebook Photo Upload Error: {photo_res}")
 
-        print(f"✅ Facebook Album मध्ये संपूर्ण ग्रुप यशस्वीपणे पोस्ट झाला: {target_id} ({len(uploaded)} पेजेस)")
+        # आता या सर्व इमेजेसची १ स्वतंत्र टाइमलाइन फीड पोस्ट तयार करणे
+        if media_attachments:
+            feed_url = f"https://graph.facebook.com/v20.0/{FB_PAGE_ID}/feed"
+            feed_payload = {
+                "access_token": FB_PAGE_ACCESS_TOKEN,
+                "message": caption,
+                "attached_media": json.dumps(media_attachments)
+            }
+            feed_res = requests.post(feed_url, data=feed_payload).json()
+            
+            if "id" in feed_res:
+                print(f"✅ Facebook स्वतंत्र ग्रुप पोस्ट तयार झाली: {feed_res['id']} (एकूण {len(media_attachments)} इमेजेस)")
+            else:
+                print(f"❌ Facebook Group Post Error: {feed_res}")
 
     return uploaded
 
 def publish_single_ig_item(img_url, caption_text):
-    """Instagram वर १ सिंगल इमेज पोस्ट करणे"""
     con_res = requests.post(
         f"https://graph.facebook.com/v20.0/{IG_ACCOUNT_ID}/media",
         data={"access_token": FB_PAGE_ACCESS_TOKEN, "image_url": img_url, "caption": caption_text}
@@ -195,7 +191,6 @@ def publish_single_ig_item(img_url, caption_text):
         print(f"❌ Instagram Single Container Error: {con_res}")
 
 def publish_ig_carousel(media_chunk, caption_text):
-    """Instagram वर २ ते १० इमेजेसचा कॅरोसेल पोस्ट करणे"""
     child_ids = []
     for item in media_chunk:
         img_url = item["url"]
@@ -246,31 +241,19 @@ def post_instagram(caption, uploaded_media):
 
     total_images = len(valid_media)
 
-    # केस १: जर स्टेटचे फक्त १ च पेज असेल
     if total_images == 1:
         publish_single_ig_item(valid_media[0]["url"], caption)
-
-    # केस २: जर स्टेटचे २ ते १० पेजेस असतील (एकाच कॅरोसेल स्लॉटमध्ये)
     elif total_images <= 10:
         publish_ig_carousel(valid_media, caption)
-
-    # केस ३: १० पेक्षा जास्त पेजेस असल्यास स्लॉट वाईज (स्लॉट १: पहिले १०, स्लॉट २: उर्वरित ५/३/इत्यादी)
     else:
         print(f"ℹ️ Instagram वर एकूण {total_images} पेजेस आहेत. स्लॉट १ (पहिले १०) आणि स्लॉट २ (उर्वरित) पोस्ट होत आहेत...")
-        
-        # पहिला स्लॉट (पहिले १० पेजेस)
         slot1_media = valid_media[:10]
         publish_ig_carousel(slot1_media, f"{caption}\n\n(Part 1 - Pages 1 to 10)")
-        
         time.sleep(10)
-        
-        # दुसरा स्लॉट (उर्वरित सर्व पेजेस)
         slot2_media = valid_media[10:]
         if len(slot2_media) == 1:
-            # जर उरलेले फक्त १ च पेज असेल तर ते सिंगल पोस्ट म्हणून पब्लिश होईल
             publish_single_ig_item(slot2_media[0]["url"], f"{caption}\n\n(Part 2 - Page 11)")
         else:
-            # जर उरलेले २ किंवा अधिक असतील तर त्याचा स्वतंत्र कॅरोसेल बनेल
             publish_ig_carousel(slot2_media, f"{caption}\n\n(Part 2 - Remaining Pages)")
 
 def main():
@@ -305,14 +288,13 @@ def main():
         generate_image(page, img_name)
         image_paths.append(img_name)
 
-    # १. Facebook वर सर्वच्या सर्व पेजेस एकाच अखंड अल्बममध्ये पोस्ट होतील
+    # १. Facebook वर संपूर्ण ग्रुपची एकच स्वतंत्र पोस्ट तयार होईल
     uploaded_media = post_facebook(state_name, post_date, caption, image_paths)
 
     # २. Instagram वर स्लॉट पद्धतीने संपूर्ण १००% डेटा पोस्ट होईल
     if uploaded_media:
         post_instagram(caption, uploaded_media)
 
-    # क्लिनअप
     for img in image_paths:
         if os.path.exists(img):
             os.remove(img)
