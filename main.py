@@ -9,12 +9,10 @@ PAGE_ID = "609269705592123"
 IG_USER_ID = "17841412056274162"
 FB_TOKEN = "EAAOiHd2BNnwBSRqv9aKYlAunjYxuVj1cl8W1Os57BlHwAJPQJhhqqZBHQ4xHQRbru8dgM3fbhzK90TrRoZBRB2CV1lV0jsYrgI01t2A7alZCJCbSdhZAcQUZCZCwlmYnOdrj585llVWO1BVZCuJ8CcWUM4ZBHPu2yANurGZCqBAFeZANlZBV13RT3xUZCANfvZCz8wkY55mAQuC67rYJh8jPiCaOz7XPE"
 
-# HTML टेंप्लेट वाचणे
 def load_html_template():
     with open("template.html", "r", encoding="utf-8") as f:
         return f.read()
 
-# १८ रो सह HTML टेंप्लेटमध्ये डेटा भरणे
 def fill_html_data(template, data):
     rows_data = data.get("PageData", [])
     current_state = data.get("StateName", "कांदा बाजार भाव")
@@ -47,8 +45,80 @@ def fill_html_data(template, data):
     template = template.replace("{{ CurrentPage }}", str(data.get("CurrentPage", 1)))
     template = template.replace("{{ TotalPages }}", str(data.get("TotalPages", 1)))
     template = template.replace("{{ TableRows }}", table_rows_html)
-    
     return template
+
+def publish_group_to_meta(group_fb_ids, group_ig_urls, caption):
+    # १. Facebook Post
+    print(f"\n--- Publishing Group ({len(group_fb_ids)} images) to Facebook ---")
+    feed_url = f"https://graph.facebook.com/v19.0/{PAGE_ID}/feed"
+    attached_media = [{"media_fbid": pid} for pid in group_fb_ids]
+    post_payload = {
+        "message": caption,
+        "attached_media": json.dumps(attached_media),
+        "access_token": FB_TOKEN
+    }
+    fb_resp = requests.post(feed_url, data=post_payload).json()
+    print("Facebook Post Response:", fb_resp)
+
+    # २. Instagram Carousel Post
+    if group_ig_urls:
+        print(f"--- Publishing Group ({len(group_ig_urls)} images) to Instagram ---")
+        ig_container_ids = []
+
+        for idx, img_url in enumerate(group_ig_urls):
+            create_item_url = f"https://graph.facebook.com/v19.0/{IG_USER_ID}/media"
+            item_payload = {
+                "image_url": img_url,
+                "is_carousel_item": "true",
+                "access_token": FB_TOKEN
+            }
+            c_res = requests.post(create_item_url, data=item_payload).json()
+            if "id" in c_res:
+                ig_container_ids.append(c_res["id"])
+                print(f"  Container {idx + 1}/{len(group_ig_urls)} created: {c_res['id']}")
+            else:
+                print(f"  Error container {idx + 1}: {c_res}")
+
+        if ig_container_ids:
+            print("Waiting 8 seconds for Meta to process items...")
+            time.sleep(8)
+
+            main_carousel_url = f"https://graph.facebook.com/v19.0/{IG_USER_ID}/media"
+            main_payload = {
+                "media_type": "CAROUSEL",
+                "children": json.dumps(ig_container_ids),
+                "caption": caption,
+                "access_token": FB_TOKEN
+            }
+            main_res = requests.post(main_carousel_url, data=main_payload).json()
+
+            if "id" in main_res:
+                creation_id = main_res["id"]
+                print(f"Main Carousel Container ID: {creation_id}")
+
+                # Polling for status 'FINISHED'
+                status_url = f"https://graph.facebook.com/v19.0/{creation_id}?fields=status_code&access_token={FB_TOKEN}"
+                is_ready = False
+                for attempt in range(1, 12):
+                    print(f"Checking IG status (Attempt {attempt}/11)...")
+                    s_res = requests.get(status_url).json()
+                    status = s_res.get("status_code", "")
+                    if status == "FINISHED":
+                        is_ready = True
+                        break
+                    elif status == "ERROR":
+                        print("Meta reported an error processing carousel.")
+                        break
+                    time.sleep(5)
+
+                if is_ready:
+                    pub_url = f"https://graph.facebook.com/v19.0/{IG_USER_ID}/media_publish"
+                    pub_res = requests.post(pub_url, data={"creation_id": creation_id, "access_token": FB_TOKEN}).json()
+                    print("Instagram Final Publish Response:", pub_res)
+                else:
+                    print("Instagram Media was not ready in time.")
+            else:
+                print("Error creating main IG carousel:", main_res)
 
 def main():
     raw_pages = os.environ.get("PAGES_JSON", "").strip()
@@ -63,51 +133,35 @@ def main():
         print("No pages data found. Exiting.")
         sys.exit(1)
 
-    # फेसबुक आणि इन्स्टाग्राम कॅप्शन
     first_page = pages_data[0]
-    curr_state = first_page.get("StateName", "इतर राज्य")
+    curr_state = first_page.get("StateName", "कांदा बाजार भाव")
     post_date = first_page.get("PostDate", "")
-    post_caption = (
-        f"🧅 {curr_state} कांदा बाजारभाव ({post_date})\n\n"
-        f"दररोजच्या ताज्या कांदा बाजारभावासाठी पेजला नक्की फॉलो करा!\n"
-        f"#कांदा #बाजारभाव #{curr_state.replace(' ', '_')} #OnionRates #greensourceonion"
-    )
 
     template_html = load_html_template()
-    fb_photo_ids = []
-    ig_image_urls = []
+    all_fb_photo_ids = []
+    all_ig_image_urls = []
 
-    # इमेज जनरेशन (Playwright) - 4:5 Portrait रेशोसह
+    # पायरी १: सर्व १८-रो च्या इमेजेस तयार करणे
     with sync_playwright() as p:
-        browser = p.chromium.launch(headless=True, args=["--no-sandbox", "--disable-setuid-sandbox", "--font-render-hinting=none"])
+        browser = p.chromium.launch(
+            headless=True,
+            args=["--no-sandbox", "--disable-setuid-sandbox", "--font-render-hinting=none"]
+        )
         context = browser.new_context(
             viewport={"width": 1080, "height": 1350}, # 4:5 Portrait Ratio
-            device_scale_factor=2 # Ultra-HD इमेजसाठी
+            device_scale_factor=2
         )
         page = context.new_page()
 
         for index, item in enumerate(pages_data):
-            # टेंप्लेटमध्ये डेटा भरणे
             final_html_content = fill_html_data(template_html, item)
-            
-            # तात्पुरती HTML फाईल बनवणे जेणेकरून Playwright ती वाचू शकेल
-            temp_html_path = f"mandi_state_temp_{index}.html"
-            with open(temp_html_path, "w", encoding="utf-8") as f:
-                f.read() # साफ करणे
-                f.write(final_html_content)
-            
             image_name = f"state_page_{index + 1}.png"
+            
             print(f"Generating 4:5 Portrait Image {index + 1}/{len(pages_data)}: {image_name}...")
-            
-            # HTML लोड करणे आणि स्क्रीनशॉट घेणे
-            local_url = f"file://{os.path.abspath(temp_html_path)}"
-            page.goto(local_url, wait_until="load")
+            page.set_content(final_html_content, wait_until="load")
             page.screenshot(path=image_name, full_page=False)
-            
-            # तात्पुरती HTML फाईल डिलीट करणे
-            os.remove(temp_html_path)
 
-            # १. Facebook वर Unpublished फोटो अपलोड
+            # Facebook वर Unpublished फोटो अपलोड
             upload_url = f"https://graph.facebook.com/v19.0/{PAGE_ID}/photos"
             with open(image_name, "rb") as img_file:
                 files = {"source": img_file}
@@ -117,104 +171,51 @@ def main():
 
             if "id" in result:
                 photo_id = result["id"]
-                fb_photo_ids.append(photo_id)
-                print(f"Page {index + 1} uploaded to FB. Photo ID: {photo_id}")
+                all_fb_photo_ids.append(photo_id)
+                print(f"  Uploaded to FB. Photo ID: {photo_id}")
 
-                # २. Instagram साठी Facebook कडून फोटोची High-Res Public URL मिळवणे
+                # Instagram साठी High-Res Public URL मिळवणे
                 pic_req = requests.get(
                     f"https://graph.facebook.com/v19.0/{photo_id}?fields=images&access_token={FB_TOKEN}"
                 ).json()
                 if "images" in pic_req and len(pic_req["images"]) > 0:
                     public_url = pic_req["images"][0]["source"]
-                    ig_image_urls.append(public_url)
+                    all_ig_image_urls.append(public_url)
             else:
-                print(f"Error uploading page {index + 1}: {result}")
+                print(f"  Error uploading page {index + 1}: {result}")
 
         browser.close()
 
-    if not fb_photo_ids:
+    if not all_fb_photo_ids:
         print("No photos uploaded. Exiting.")
         sys.exit(1)
 
-    # --- Facebook पोस्ट करणे (Multi-Photo Post) ---
-    print(f"\n--- 1. Publishing {curr_state} to Facebook ---")
-    feed_url = f"https://graph.facebook.com/v19.0/{PAGE_ID}/feed"
-    attached_media = [{"media_fbid": pid} for pid in fb_photo_ids]
-    post_payload = {
-        "message": post_caption,
-        "attached_media": json.dumps(attached_media),
-        "access_token": FB_TOKEN
-    }
-    fb_resp = requests.post(feed_url, data=post_payload)
-    print("Facebook Post Response:", fb_resp.text)
+    # पायरी २: ग्रुपिंग करणे (Instagram च्या नियमानुसार कमाल १० इमेजेसचा एक ग्रुप)
+    MAX_PER_GROUP = 10
+    total_images = len(all_fb_photo_ids)
+    num_groups = (total_images + MAX_PER_GROUP - 1) // MAX_PER_GROUP
 
-    # --- Instagram पोस्ट करणे (Multi-Photo Carousel Post) ---
-    if ig_image_urls:
-        print(f"\n--- 2. Publishing {curr_state} to Instagram ---")
-        ig_container_ids = []
+    print(f"\nTotal Images: {total_images}. Dividing into {num_groups} group(s)...")
 
-        # प्रत्येक इमेजचा Instagram Item Container तयार करणे
-        for idx, img_url in enumerate(ig_image_urls):
-            create_item_url = f"https://graph.facebook.com/v19.0/{IG_USER_ID}/media"
-            item_payload = {
-                "image_url": img_url,
-                "is_carousel_item": "true",
-                "access_token": FB_TOKEN
-            }
-            c_res = requests.post(create_item_url, data=item_payload).json()
-            if "id" in c_res:
-                ig_container_ids.append(c_res["id"])
-                print(f"IG Carousel item {idx + 1} container created: {c_res['id']}")
-            else:
-                print(f"Error creating IG item {idx + 1}: {c_res}")
+    for g_idx in range(num_groups):
+        start = g_idx * MAX_PER_GROUP
+        end = start + MAX_PER_GROUP
+        group_fb = all_fb_photo_ids[start:end]
+        group_ig = all_ig_image_urls[start:end]
 
-        # सर्व आयटम्स एकत्र करून मुख्य Carousel Container तयार करणे
-        if ig_container_ids:
-            # आयटम्स प्रोसेस होण्यासाठी सुरुवातीला ८ सेकंद वाट पाहणे (Wait before Main Carousel)
-            print("Waiting 8 seconds for item containers to process...")
-            time.sleep(8)
+        part_text = f" (Part {g_idx + 1}/{num_groups})" if num_groups > 1 else ""
+        caption = (
+            f"🧅 {curr_state} कांदा बाजारभाव{part_text} ({post_date})\n\n"
+            f"दररोजच्या ताज्या कांदा बाजारभावासाठी पेजला नक्की फॉलो करा!\n"
+            f"#कांदा #बाजारभाव #{curr_state.replace(' ', '_')} #OnionRates #greensourceonion"
+        )
 
-            main_carousel_url = f"https://graph.facebook.com/v19.0/{IG_USER_ID}/media"
-            main_payload = {
-                "media_type": "CAROUSEL",
-                "children": json.dumps(ig_container_ids),
-                "caption": post_caption,
-                "access_token": FB_TOKEN
-            }
-            main_res = requests.post(main_carousel_url, data=main_payload).json()
-
-            if "id" in main_res:
-                creation_id = main_res["id"]
-                print(f"Main IG Carousel Container ID: {creation_id}")
-
-                # कंटेनर स्टेटस 'FINISHED' होईपर्यंत तपासणे (Status Polling Loop)
-                # इन्स्टाग्रामला ४:५ रेशोच्या ५ इमेजेस रेंडर करायला वेळ लागतो.
-                status_url = f"https://graph.facebook.com/v19.0/{creation_id}?fields=status_code&access_token={FB_TOKEN}"
-                is_ready = False
-                # जास्तीत जास्त ४५ सेकंद वाट पाहणे (९ ट्राय * ५ सेकंद)
-                for attempt in range(1, 10):
-                    print(f"Checking media readiness (Attempt {attempt}/9)...")
-                    s_res = requests.get(status_url).json()
-                    status = s_res.get("status_code", "")
-                    print(f"Current Status: {status}")
-
-                    if status == "FINISHED":
-                        is_ready = True
-                        break
-                    elif status == "ERROR":
-                        print("Meta reported an error processing this carousel container.")
-                        break
-                    time.sleep(5)
-
-                # फायनल पब्लिश करणे
-                if is_ready:
-                    publish_url = f"https://graph.facebook.com/v19.0/{IG_USER_ID}/media_publish"
-                    pub_res = requests.post(publish_url, data={"creation_id": creation_id, "access_token": FB_TOKEN}).json()
-                    print("Instagram Final Publish Response:", pub_res)
-                else:
-                    print("Could not publish: Media container was not ready in time.")
-            else:
-                print("Error creating main IG carousel:", main_res)
+        publish_group_to_meta(group_fb, group_ig, caption)
+        
+        # ग्रुप्समध्ये १० सेकंदांचा गॅप ठेवणे
+        if g_idx < num_groups - 1:
+            print("Waiting 10 seconds before publishing next group...")
+            time.sleep(10)
 
 if __name__ == "__main__":
     main()
