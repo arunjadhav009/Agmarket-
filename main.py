@@ -89,8 +89,7 @@ def generate_image(page_data, output_path):
         browser.close()
 
 def get_photo_url(photo_id):
-    """Facebook कडून फोटोची पब्लिक व्हॅलिड URL मिळवणे"""
-    for _ in range(3):
+    for _ in range(4):
         res = requests.get(
             f"https://graph.facebook.com/v20.0/{photo_id}",
             params={"access_token": FB_PAGE_ACCESS_TOKEN, "fields": "source,images"}
@@ -105,7 +104,7 @@ def get_photo_url(photo_id):
 def post_facebook(state_name, post_date, caption, image_paths):
     uploaded = []
 
-    # १. सिंगल इमेज असल्यास थेट पोस्ट
+    # १. सिंगल इमेज (१ पेज)
     if len(image_paths) == 1:
         url = f"https://graph.facebook.com/v20.0/{FB_PAGE_ID}/photos"
         with open(image_paths[0], "rb") as img_file:
@@ -129,12 +128,11 @@ def post_facebook(state_name, post_date, caption, image_paths):
                 img_url = res.get("source", "")
             else:
                 img_url = get_photo_url(res["id"])
-
             uploaded.append({"id": res["id"], "url": img_url})
         else:
             print(f"❌ Facebook Single Upload Error: {res}")
 
-    # २. मल्टिपल इमेजेस असल्यास स्वतंत्र अल्बम
+    # २. मल्टिपल इमेजेसचा संपूर्ण ग्रुप / अल्बम (उदा. 13, 7, 5, 3 पेजेस)
     else:
         album_name = f"{state_name} Onion Rates ({post_date})"
         album_url = f"https://graph.facebook.com/v20.0/{FB_PAGE_ID}/albums"
@@ -157,7 +155,7 @@ def post_facebook(state_name, post_date, caption, image_paths):
                     upload_url,
                     params={
                         "access_token": FB_PAGE_ACCESS_TOKEN,
-                        "caption": f"{state_name} - Page {idx + 1}",
+                        "caption": f"{state_name} - Page {idx + 1} of {len(image_paths)}",
                         "fields": "id,images,source"
                     },
                     files={"source": img_file}
@@ -171,30 +169,63 @@ def post_facebook(state_name, post_date, caption, image_paths):
                     img_url = photo_res.get("source", "")
                 else:
                     img_url = get_photo_url(photo_res["id"])
-
                 uploaded.append({"id": photo_res["id"], "url": img_url})
             else:
-                print(f"❌ Facebook Photo Upload Failed: {photo_res}")
+                print(f"❌ Facebook Photo Upload Error: {photo_res}")
 
         print(f"✅ Facebook Multi-image Album तयार झाला: {target_id} ({len(uploaded)} पेजेस)")
 
     return uploaded
 
+def publish_ig_carousel(media_chunk, caption_text):
+    """Instagram वर जास्तीत जास्त १० इमेजेसचा कॅरोसेल पोस्ट करणे"""
+    child_ids = []
+    for item in media_chunk:
+        img_url = item["url"]
+        child_res = requests.post(
+            f"https://graph.facebook.com/v20.0/{IG_ACCOUNT_ID}/media",
+            data={
+                "access_token": FB_PAGE_ACCESS_TOKEN,
+                "image_url": img_url,
+                "is_carousel_item": "true"
+            }
+        ).json()
+        if "id" in child_res:
+            child_ids.append(child_res["id"])
+        time.sleep(2)
+
+    if not child_ids:
+        print("❌ Instagram Carousel साठी आयडी तयार झाले नाहीत.")
+        return
+
+    car_res = requests.post(
+        f"https://graph.facebook.com/v20.0/{IG_ACCOUNT_ID}/media",
+        data={
+            "access_token": FB_PAGE_ACCESS_TOKEN,
+            "media_type": "CAROUSEL",
+            "caption": caption_text,
+            "children": ",".join(child_ids)
+        }
+    ).json()
+
+    if "id" in car_res:
+        time.sleep(10)
+        pub_res = requests.post(
+            f"https://graph.facebook.com/v20.0/{IG_ACCOUNT_ID}/media_publish",
+            data={"access_token": FB_PAGE_ACCESS_TOKEN, "creation_id": car_res["id"]}
+        ).json()
+        print(f"✅ Instagram Carousel Published: {pub_res}")
+    else:
+        print(f"❌ Instagram Carousel Container Error: {car_res}")
+
 def post_instagram(caption, uploaded_media):
     if not IG_ACCOUNT_ID:
-        print("ℹ️ IG_ACCOUNT_ID सेट नाही, Instagram पोस्ट वगळली.")
         return
 
-    # फिल्टर: फक्त वैध URL असलेलेच आयटम्स घेणे
     valid_media = [m for m in uploaded_media if m.get("url")]
     if not valid_media:
-        print("❌ Instagram साठी वैध इमेज URLs उपलब्ध नाहीत.")
+        print("❌ Instagram साठी व्हॅलिड URLs सापडल्या नाहीत.")
         return
-
-    # Instagram Carousel मर्यादा: कमाल १० इमेजेस
-    if len(valid_media) > 10:
-        print(f"⚠️ Instagram मर्यादा: एकूण {len(valid_media)} पैकी फक्त पहिल्या १० इमेजेस Carousel साठी वापरल्या जातील.")
-        valid_media = valid_media[:10]
 
     # केस १: सिंगल इमेज
     if len(valid_media) == 1:
@@ -211,49 +242,19 @@ def post_instagram(caption, uploaded_media):
                 data={"access_token": FB_PAGE_ACCESS_TOKEN, "creation_id": con_res["id"]}
             ).json()
             print(f"✅ Instagram Single Post Published: {pub_res}")
-        else:
-            print(f"❌ Instagram Single Container Error: {con_res}")
 
-    # केस २: Carousel पोस्ट (२ ते १० इमेजेस)
+    # केस २: २ ते १० इमेजेसचा एक ग्रुप
+    elif len(valid_media) <= 10:
+        publish_ig_carousel(valid_media, caption)
+
+    # केस ३: १० पेक्षा जास्त (उदा. १३ पेजेस) असल्यास दोन ग्रुप्समध्ये विभागून पोस्ट करणे
     else:
-        child_ids = []
-        for item in valid_media:
-            img_url = item["url"]
-            child_res = requests.post(
-                f"https://graph.facebook.com/v20.0/{IG_ACCOUNT_ID}/media",
-                data={
-                    "access_token": FB_PAGE_ACCESS_TOKEN,
-                    "image_url": img_url,
-                    "is_carousel_item": "true"
-                }
-            ).json()
-            if "id" in child_res:
-                child_ids.append(child_res["id"])
-            time.sleep(2)
-
-        if not child_ids:
-            print("❌ Instagram Carousel चे चाइल्ड कंटेनर्स तयार झाले नाहीत.")
-            return
-
-        car_res = requests.post(
-            f"https://graph.facebook.com/v20.0/{IG_ACCOUNT_ID}/media",
-            data={
-                "access_token": FB_PAGE_ACCESS_TOKEN,
-                "media_type": "CAROUSEL",
-                "caption": caption,
-                "children": ",".join(child_ids)
-            }
-        ).json()
-
-        if "id" in car_res:
-            time.sleep(10)
-            pub_res = requests.post(
-                f"https://graph.facebook.com/v20.0/{IG_ACCOUNT_ID}/media_publish",
-                data={"access_token": FB_PAGE_ACCESS_TOKEN, "creation_id": car_res["id"]}
-            ).json()
-            print(f"✅ Instagram Carousel Published: {pub_res}")
-        else:
-            print(f"❌ Instagram Carousel Container Error: {car_res}")
+        print(f"ℹ️ एकूण {len(valid_media)} पेजेस आहेत. Instagram नियमानुसार २ ग्रुप्समध्ये पोस्ट केले जातील.")
+        # पहिला ग्रुप (पहिले १० पेजेस)
+        publish_ig_carousel(valid_media[:10], f"{caption} (Part 1)")
+        time.sleep(10)
+        # दुसरा ग्रुप (उर्वरित पेजेस)
+        publish_ig_carousel(valid_media[10:], f"{caption} (Part 2)")
 
 def main():
     if not PAGES_JSON:
@@ -272,14 +273,14 @@ def main():
         pages = []
 
     if not pages:
-        print("कोणताही पेज डेटा उपलब्ध नाही.")
+        print("कोणताही डेटा सापडला नाही.")
         return
 
     state_name = pages[0].get("StateName", "All India")
     post_date = pages[0].get("PostDate", "")
     caption = f"🧅 {state_name} Onion Mandi Bhav Today ({post_date})\n\nDaily Onion Market Rates Update for {state_name}."
 
-    print(f"🚀 Processing State: {state_name} ({len(pages)} पेजेस)")
+    print(f"🚀 State सुरू आहे: {state_name} ({len(pages)} पेजेस चा ग्रुप)")
 
     image_paths = []
     for idx, page in enumerate(pages):
@@ -287,10 +288,10 @@ def main():
         generate_image(page, img_name)
         image_paths.append(img_name)
 
-    # १. Facebook पोस्टिंग
+    # १. Facebook पोस्टिंग (सर्वच्या सर्व इमेजेस एकाच अखंड अल्बम/ग्रुपमध्ये)
     uploaded_media = post_facebook(state_name, post_date, caption, image_paths)
 
-    # २. Instagram पोस्टिंग (१० पेक्षा जास्त पेजेस असल्यास १० ची लिमिट आणि URL री-ट्राय)
+    # २. Instagram पोस्टिंग (कॅरोसेल ग्रुप)
     if uploaded_media:
         post_instagram(caption, uploaded_media)
 
