@@ -35,7 +35,8 @@ def generate_image(page_data, output_path):
 
     with sync_playwright() as p:
         browser = p.chromium.launch()
-        page = browser.new_page(viewport={"width": 1080, "height": 1350})
+        # अचूक 1:1 Square रेशो (1080x1080)
+        page = browser.new_page(viewport={"width": 1080, "height": 1080})
         page.set_content(rendered_html)
         page.screenshot(path=output_path, full_page=False)
         browser.close()
@@ -43,7 +44,7 @@ def generate_image(page_data, output_path):
 def post_facebook(state_name, post_date, caption, image_paths):
     uploaded = []
 
-    # १. सिंगल इमेज असल्यास स्वतंत्र टाइमलाइन पोस्ट म्हणून पब्लिश करणे
+    # १. सिंगल इमेज असल्यास थेट पब्लिश करणे
     if len(image_paths) == 1:
         url = f"https://graph.facebook.com/v20.0/{FB_PAGE_ID}/photos"
         with open(image_paths[0], "rb") as img_file:
@@ -73,7 +74,7 @@ def post_facebook(state_name, post_date, caption, image_paths):
         else:
             print(f"❌ Facebook Single Upload Error: {res}")
 
-    # २. मल्टिपल इमेजेस असल्यास स्वतंत्र अल्बम तयार करून त्यात टाकणे (Error 100 कायमस्वरूपी बायपास)
+    # २. मल्टिपल इमेजेस असल्यास स्वतंत्र अल्बम तयार करून अपलोड करणे
     else:
         album_name = f"{state_name} Onion Rates ({post_date})"
         album_url = f"https://graph.facebook.com/v20.0/{FB_PAGE_ID}/albums"
@@ -122,9 +123,10 @@ def post_facebook(state_name, post_date, caption, image_paths):
 
 def post_instagram(caption, uploaded_media):
     if not IG_ACCOUNT_ID:
+        print("ℹ️ IG_ACCOUNT_ID सेट नाही, Instagram पोस्ट वगळली.")
         return
 
-    # केस १: सिंगल इमेज
+    # सिंगल इमेज
     if len(uploaded_media) == 1:
         img_url = uploaded_media[0].get("url")
         if not img_url:
@@ -142,8 +144,10 @@ def post_instagram(caption, uploaded_media):
                 data={"access_token": FB_PAGE_ACCESS_TOKEN, "creation_id": con_res["id"]}
             ).json()
             print(f"✅ Instagram Single Post Published: {pub_res}")
+        else:
+            print(f"❌ Instagram Container Error: {con_res}")
 
-    # केस २: Carousel पोस्ट
+    # Carousel पोस्ट (मल्टी-इमेज)
     else:
         child_ids = []
         for item in uploaded_media:
@@ -182,9 +186,12 @@ def post_instagram(caption, uploaded_media):
                 data={"access_token": FB_PAGE_ACCESS_TOKEN, "creation_id": car_res["id"]}
             ).json()
             print(f"✅ Instagram Carousel Published: {pub_res}")
+        else:
+            print(f"❌ Instagram Carousel Container Error: {car_res}")
 
 def main():
     if not PAGES_JSON:
+        print("❌ PAGES_JSON रिकामा आहे.")
         return
 
     data = json.loads(PAGES_JSON)
@@ -199,13 +206,14 @@ def main():
         pages = []
 
     if not pages:
+        print("कोणताही पेज डेटा उपलब्ध नाही.")
         return
 
     state_name = pages[0].get("StateName", "All India")
     post_date = pages[0].get("PostDate", "")
     caption = f"🧅 {state_name} Onion Mandi Bhav Today ({post_date})\n\nDaily Onion Market Rates Update for {state_name}."
 
-    print(f"🚀 Processing: {state_name} ({len(pages)} पेजेस)")
+    print(f"🚀 Processing State: {state_name} ({len(pages)} पेजेस)")
 
     image_paths = []
     for idx, page in enumerate(pages):
@@ -220,6 +228,7 @@ def main():
     if uploaded_media:
         post_instagram(caption, uploaded_media)
 
+    # क्लिनअप
     for img in image_paths:
         if os.path.exists(img):
             os.remove(img)
