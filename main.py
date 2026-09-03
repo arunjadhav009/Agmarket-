@@ -104,7 +104,7 @@ def get_photo_url(photo_id):
 def post_facebook(state_name, post_date, caption, image_paths):
     uploaded = []
 
-    # १. जर स्टेटचे फक्त १ च पेज असेल -> थेट सिंगल पोस्ट
+    # १. सिंगल इमेज (१ पेज)
     if len(image_paths) == 1:
         url = f"https://graph.facebook.com/v20.0/{FB_PAGE_ID}/photos"
         with open(image_paths[0], "rb") as img_file:
@@ -132,7 +132,7 @@ def post_facebook(state_name, post_date, caption, image_paths):
         else:
             print(f"❌ Facebook Single Upload Error: {res}")
 
-    # २. जर स्टेटचे २ किंवा त्यापेक्षा जास्त पेजेस असतील (३, ७, १०, १३) -> १ Dedicated Album (ग्रुप)
+    # २. मल्टिपल इमेजेसचा संपूर्ण अल्बम (Facebook वर सर्वच्या सर्व पेजेस एकत्र)
     else:
         album_name = f"{state_name} Onion Rates ({post_date})"
         album_url = f"https://graph.facebook.com/v20.0/{FB_PAGE_ID}/albums"
@@ -177,75 +177,101 @@ def post_facebook(state_name, post_date, caption, image_paths):
 
     return uploaded
 
+def publish_single_ig_item(img_url, caption_text):
+    """Instagram वर १ सिंगल इमेज पोस्ट करणे"""
+    con_res = requests.post(
+        f"https://graph.facebook.com/v20.0/{IG_ACCOUNT_ID}/media",
+        data={"access_token": FB_PAGE_ACCESS_TOKEN, "image_url": img_url, "caption": caption_text}
+    ).json()
+
+    if "id" in con_res:
+        time.sleep(5)
+        pub_res = requests.post(
+            f"https://graph.facebook.com/v20.0/{IG_ACCOUNT_ID}/media_publish",
+            data={"access_token": FB_PAGE_ACCESS_TOKEN, "creation_id": con_res["id"]}
+        ).json()
+        print(f"✅ Instagram Single Post Published: {pub_res}")
+    else:
+        print(f"❌ Instagram Single Container Error: {con_res}")
+
+def publish_ig_carousel(media_chunk, caption_text):
+    """Instagram वर २ ते १० इमेजेसचा कॅरोसेल पोस्ट करणे"""
+    child_ids = []
+    for item in media_chunk:
+        img_url = item["url"]
+        child_res = requests.post(
+            f"https://graph.facebook.com/v20.0/{IG_ACCOUNT_ID}/media",
+            data={
+                "access_token": FB_PAGE_ACCESS_TOKEN,
+                "image_url": img_url,
+                "is_carousel_item": "true"
+            }
+        ).json()
+        if "id" in child_res:
+            child_ids.append(child_res["id"])
+        time.sleep(2)
+
+    if not child_ids:
+        print("❌ Instagram Carousel साठी कंटेनर आयडी तयार झाले नाहीत.")
+        return
+
+    car_res = requests.post(
+        f"https://graph.facebook.com/v20.0/{IG_ACCOUNT_ID}/media",
+        data={
+            "access_token": FB_PAGE_ACCESS_TOKEN,
+            "media_type": "CAROUSEL",
+            "caption": caption_text,
+            "children": ",".join(child_ids)
+        }
+    ).json()
+
+    if "id" in car_res:
+        time.sleep(12)
+        pub_res = requests.post(
+            f"https://graph.facebook.com/v20.0/{IG_ACCOUNT_ID}/media_publish",
+            data={"access_token": FB_PAGE_ACCESS_TOKEN, "creation_id": car_res["id"]}
+        ).json()
+        print(f"✅ Instagram Carousel Published ({len(child_ids)} इमेजेस): {pub_res}")
+    else:
+        print(f"❌ Instagram Carousel Container Error: {car_res}")
+
 def post_instagram(caption, uploaded_media):
     if not IG_ACCOUNT_ID:
         return
 
     valid_media = [m for m in uploaded_media if m.get("url")]
     if not valid_media:
-        print("❌ Instagram साठी व्हॅलिड URLs सापडल्या नाहीत.")
+        print("❌ Instagram साठी व्हॅलिड URLs उपलब्ध नाहीत.")
         return
 
-    # १. जर स्टेटचे फक्त १ च पेज असेल -> सिंगल इमेज पोस्ट
-    if len(valid_media) == 1:
-        img_url = valid_media[0]["url"]
-        con_res = requests.post(
-            f"https://graph.facebook.com/v20.0/{IG_ACCOUNT_ID}/media",
-            data={"access_token": FB_PAGE_ACCESS_TOKEN, "image_url": img_url, "caption": caption}
-        ).json()
+    total_images = len(valid_media)
 
-        if "id" in con_res:
-            time.sleep(5)
-            pub_res = requests.post(
-                f"https://graph.facebook.com/v20.0/{IG_ACCOUNT_ID}/media_publish",
-                data={"access_token": FB_PAGE_ACCESS_TOKEN, "creation_id": con_res["id"]}
-            ).json()
-            print(f"✅ Instagram Single Post Published: {pub_res}")
+    # केस १: जर स्टेटचे फक्त १ च पेज असेल
+    if total_images == 1:
+        publish_single_ig_item(valid_media[0]["url"], caption)
 
-    # २. स्टेटच्या जितक्याही इमेजेस असतील (३, ७, १०, १३) -> त्या सर्वच्या सर्व एकाच सिंगल कॅरोसेल ग्रुपमध्ये!
+    # केस २: जर स्टेटचे २ ते १० पेजेस असतील (एकाच कॅरोसेल स्लॉटमध्ये)
+    elif total_images <= 10:
+        publish_ig_carousel(valid_media, caption)
+
+    # केस ३: १० पेक्षा जास्त पेजेस असल्यास स्लॉट वाईज (स्लॉट १: पहिले १०, स्लॉट २: उर्वरित ५/३/इत्यादी)
     else:
-        print(f"🚀 Instagram वर संपूर्ण {len(valid_media)} पेजेसचा १ अखंड ग्रुप (Carousel) तयार होत आहे...")
-        child_ids = []
-        for item in valid_media:
-            img_url = item["url"]
-            child_res = requests.post(
-                f"https://graph.facebook.com/v20.0/{IG_ACCOUNT_ID}/media",
-                data={
-                    "access_token": FB_PAGE_ACCESS_TOKEN,
-                    "image_url": img_url,
-                    "is_carousel_item": "true"
-                }
-            ).json()
-            if "id" in child_res:
-                child_ids.append(child_res["id"])
-            time.sleep(2)
-
-        if not child_ids:
-            print("❌ Instagram Carousel साठी चाइल्ड कंटेनर तयार झाले नाहीत.")
-            return
-
-        car_res = requests.post(
-            f"https://graph.facebook.com/v20.0/{IG_ACCOUNT_ID}/media",
-            data={
-                "access_token": FB_PAGE_ACCESS_TOKEN,
-                "media_type": "CAROUSEL",
-                "caption": caption,
-                "children": ",".join(child_ids)
-            }
-        ).json()
-
-        if "id" in car_res:
-            # सर्व पेजेस प्रोसेस होण्यासाठी पुरेसा वेळ (इमेज संख्येनुसार वाढवला आहे)
-            wait_time = max(15, len(child_ids) * 2)
-            time.sleep(wait_time)
-
-            pub_res = requests.post(
-                f"https://graph.facebook.com/v20.0/{IG_ACCOUNT_ID}/media_publish",
-                data={"access_token": FB_PAGE_ACCESS_TOKEN, "creation_id": car_res["id"]}
-            ).json()
-            print(f"✅ Instagram Carousel Published (सर्व {len(child_ids)} पेजेस एकाच ग्रुपमध्ये): {pub_res}")
+        print(f"ℹ️ Instagram वर एकूण {total_images} पेजेस आहेत. स्लॉट १ (पहिले १०) आणि स्लॉट २ (उर्वरित) पोस्ट होत आहेत...")
+        
+        # पहिला स्लॉट (पहिले १० पेजेस)
+        slot1_media = valid_media[:10]
+        publish_ig_carousel(slot1_media, f"{caption}\n\n(Part 1 - Pages 1 to 10)")
+        
+        time.sleep(10)
+        
+        # दुसरा स्लॉट (उर्वरित सर्व पेजेस)
+        slot2_media = valid_media[10:]
+        if len(slot2_media) == 1:
+            # जर उरलेले फक्त १ च पेज असेल तर ते सिंगल पोस्ट म्हणून पब्लिश होईल
+            publish_single_ig_item(slot2_media[0]["url"], f"{caption}\n\n(Part 2 - Page 11)")
         else:
-            print(f"❌ Instagram Carousel Container Error: {car_res}")
+            # जर उरलेले २ किंवा अधिक असतील तर त्याचा स्वतंत्र कॅरोसेल बनेल
+            publish_ig_carousel(slot2_media, f"{caption}\n\n(Part 2 - Remaining Pages)")
 
 def main():
     if not PAGES_JSON:
@@ -271,7 +297,7 @@ def main():
     post_date = pages[0].get("PostDate", "")
     caption = f"🧅 {state_name} Onion Mandi Bhav Today ({post_date})\n\nDaily Onion Market Rates Update for {state_name}."
 
-    print(f"🚀 State सुरू आहे: {state_name} ({len(pages)} पेजेस चा १ अखंड ग्रुप)")
+    print(f"🚀 State सुरू आहे: {state_name} ({len(pages)} पेजेस चा ग्रुप)")
 
     image_paths = []
     for idx, page in enumerate(pages):
@@ -279,10 +305,10 @@ def main():
         generate_image(page, img_name)
         image_paths.append(img_name)
 
-    # १. Facebook: सर्वच्या सर्व पेजेसचा १ अखंड ग्रुप
+    # १. Facebook वर सर्वच्या सर्व पेजेस एकाच अखंड अल्बममध्ये पोस्ट होतील
     uploaded_media = post_facebook(state_name, post_date, caption, image_paths)
 
-    # २. Instagram: सर्वच्या सर्व पेजेसचा १ अखंड कॅरोसेल ग्रुप
+    # २. Instagram वर स्लॉट पद्धतीने संपूर्ण १००% डेटा पोस्ट होईल
     if uploaded_media:
         post_instagram(caption, uploaded_media)
 
