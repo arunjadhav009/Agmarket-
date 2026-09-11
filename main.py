@@ -11,6 +11,7 @@ FB_PAGE_ACCESS_TOKEN = os.environ.get("FB_PAGE_ACCESS_TOKEN")
 IG_ACCOUNT_ID = os.environ.get("IG_ACCOUNT_ID")
 
 STATE_THEMES = {
+    "Maharashtra": {"primary": "#ff6f00", "secondary": "#e65100", "bg": "#fff8e1"},
     "Gujarat": {"primary": "#005a9c", "secondary": "#1976d2", "bg": "#f0f7ff"},
     "Karnataka": {"primary": "#311b92", "secondary": "#512da8", "bg": "#f4f1fa"},
     "Madhya Pradesh": {"primary": "#b71c1c", "secondary": "#c62828", "bg": "#fff5f5"},
@@ -242,7 +243,7 @@ def main():
         generate_image(page, img_name)
         image_paths.append(img_name)
 
-    # १. Facebook वर सुरक्षित पब्लिश करणे (कधीही एरर #100 येणार नाही)
+    # १. Facebook वर सुरक्षित पब्लिश करणे
     uploaded_media = post_facebook_clean(state_name, post_date, caption, image_paths)
 
     # २. Instagram वर १ अखंड कॅरोसेल ग्रुप पब्लिश करणे
